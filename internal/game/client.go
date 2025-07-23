@@ -33,7 +33,7 @@ type GameClient struct {
 func NewGameClient() *GameClient {
 	return &GameClient{
 		players:      make(map[string]*types.Player),
-		moveThrottle: 50 * time.Millisecond, // Limit movement updates to 20/sec
+		moveThrottle: 16 * time.Millisecond, // Limit movement updates to ~60/sec to match render loop
 		messages:     make([]string, 0),
 		shouldClose:  false,
 	}
@@ -210,7 +210,7 @@ func (g *GameClient) handleInput() {
 		return
 	}
 
-	// Throttle movement updates
+	// Throttle movement updates - but allow more frequent updates for smoother feel
 	if time.Since(g.lastMoveTime) < g.moveThrottle {
 		return
 	}
@@ -279,16 +279,25 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 	// Clear screen with dark background
 	screen.Fill(color.RGBA{0x20, 0x20, 0x20, 0xff})
 
+	// Copy player data to avoid holding locks during rendering
 	g.mutex.RLock()
 	connected := g.connected
 	playerCount := len(g.players)
 	localPlayerID := g.localPlayerID
-
-	// Draw all players first
+	
+	// Create a snapshot of players to avoid holding lock during draw
+	playerSnapshot := make([]*types.Player, 0, len(g.players))
 	for _, player := range g.players {
-		g.drawPlayer(screen, player)
+		// Create copy of player data
+		playerCopy := *player
+		playerSnapshot = append(playerSnapshot, &playerCopy)
 	}
 	g.mutex.RUnlock()
+
+	// Draw all players without holding any locks
+	for _, player := range playerSnapshot {
+		g.drawPlayer(screen, player)
+	}
 
 	// Draw UI on top
 	g.drawUI(screen)
