@@ -6,55 +6,25 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/CollinEMac/tarnation/internal/types"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
-// Message types for client-server communication
-type MessageType string
-
-const (
-	MsgPlayerJoin   MessageType = "player_join"
-	MsgPlayerLeave  MessageType = "player_leave"
-	MsgPlayerMove   MessageType = "player_move"
-	MsgPlayerAction MessageType = "player_action"
-	MsgGameState    MessageType = "game_state"
-	MsgError        MessageType = "error"
-)
-
-// Message represents all communication between client and server
-type Message struct {
-	Type      MessageType     `json:"type"`
-	PlayerID  string          `json:"player_id,omitempty"`
-	Data      json.RawMessage `json:"data,omitempty"`
-	Timestamp int64           `json:"timestamp"`
-}
-
-// Player represents a connected player
-type Player struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	X         float64         `json:"x"`
-	Y         float64         `json:"y"`
-	Class     string          `json:"class"`
-	Health    int             `json:"health"`
-	MaxHealth int             `json:"max_health"`
-	Conn      *websocket.Conn `json:"-"`
-}
 
 // GameServer manages all connected players and game instances
 type GameServer struct {
-	players   map[string]*Player
+	players   map[string]*types.Player
 	mutex     sync.RWMutex
 	upgrader  websocket.Upgrader
-	broadcast chan Message
+	broadcast chan types.Message
 }
 
 // NewGameServer creates a new game server instance
 func NewGameServer() *GameServer {
 	server := &GameServer{
-		players:   make(map[string]*Player),
-		broadcast: make(chan Message, 256),
+		players:   make(map[string]*types.Player),
+		broadcast: make(chan types.Message, 256),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				// Allow all origins for development - restrict in production
@@ -79,7 +49,7 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Create new player
 	playerID := uuid.New().String()
-	player := &Player{
+	player := &types.Player{
 		ID:        playerID,
 		Name:      "Player " + playerID[:8], // Default name
 		X:         400,                      // Default spawn position
@@ -98,8 +68,8 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Player %s connected", playerID)
 
 	// Send welcome message
-	welcomeMsg := Message{
-		Type:     MsgPlayerJoin,
+	welcomeMsg := types.Message{
+		Type:     types.MsgPlayerJoin,
 		PlayerID: playerID,
 		Data:     s.marshalPlayer(player),
 	}
@@ -110,8 +80,8 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Broadcast player join to all other players
-	s.broadcast <- Message{
-		Type:     MsgPlayerJoin,
+	s.broadcast <- types.Message{
+		Type:     types.MsgPlayerJoin,
 		PlayerID: playerID,
 		Data:     s.marshalPlayer(player),
 	}
@@ -121,7 +91,7 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePlayerConnection processes messages from a specific player
-func (s *GameServer) handlePlayerConnection(player *Player) {
+func (s *GameServer) handlePlayerConnection(player *types.Player) {
 	defer func() {
 		// Clean up when player disconnects
 		s.mutex.Lock()
@@ -131,8 +101,8 @@ func (s *GameServer) handlePlayerConnection(player *Player) {
 		player.Conn.Close()
 
 		// Broadcast player leave
-		s.broadcast <- Message{
-			Type:     MsgPlayerLeave,
+		s.broadcast <- types.Message{
+			Type:     types.MsgPlayerLeave,
 			PlayerID: player.ID,
 		}
 
@@ -140,7 +110,7 @@ func (s *GameServer) handlePlayerConnection(player *Player) {
 	}()
 
 	for {
-		var msg Message
+		var msg types.Message
 		err := player.Conn.ReadJSON(&msg)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -155,9 +125,9 @@ func (s *GameServer) handlePlayerConnection(player *Player) {
 }
 
 // handleMessage processes incoming messages from players
-func (s *GameServer) handleMessage(player *Player, msg Message) {
+func (s *GameServer) handleMessage(player *types.Player, msg types.Message) {
 	switch msg.Type {
-	case MsgPlayerMove:
+	case types.MsgPlayerMove:
 		var moveData struct {
 			X float64 `json:"x"`
 			Y float64 `json:"y"`
@@ -175,19 +145,19 @@ func (s *GameServer) handleMessage(player *Player, msg Message) {
 		s.mutex.Unlock()
 
 		// Broadcast position update
-		s.broadcast <- Message{
-			Type:     MsgPlayerMove,
+		s.broadcast <- types.Message{
+			Type:     types.MsgPlayerMove,
 			PlayerID: player.ID,
 			Data:     msg.Data,
 		}
 
-	case MsgPlayerAction:
+	case types.MsgPlayerAction:
 		// Handle player actions (abilities, attacks, etc.)
 		log.Printf("Player %s used action: %s", player.ID, string(msg.Data))
 
 		// Broadcast action to other players
-		s.broadcast <- Message{
-			Type:     MsgPlayerAction,
+		s.broadcast <- types.Message{
+			Type:     types.MsgPlayerAction,
 			PlayerID: player.ID,
 			Data:     msg.Data,
 		}
@@ -203,7 +173,7 @@ func (s *GameServer) handleBroadcast() {
 		s.mutex.RLock()
 		for _, player := range s.players {
 			// Don't send message back to the sender for certain message types
-			if msg.Type == MsgPlayerMove && player.ID == msg.PlayerID {
+			if msg.Type == types.MsgPlayerMove && player.ID == msg.PlayerID {
 				continue
 			}
 
@@ -224,7 +194,7 @@ func (s *GameServer) GetConnectedPlayers() int {
 }
 
 // marshalPlayer converts player to JSON for network transmission
-func (s *GameServer) marshalPlayer(player *Player) json.RawMessage {
+func (s *GameServer) marshalPlayer(player *types.Player) json.RawMessage {
 	data, _ := json.Marshal(player)
 	return data
 }

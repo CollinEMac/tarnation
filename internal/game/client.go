@@ -8,46 +8,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/CollinEMac/tarnation/internal/types"
 	"github.com/gorilla/websocket"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
-// Player represents a player in the game world
-type Player struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	X         float64 `json:"x"`
-	Y         float64 `json:"y"`
-	Class     string  `json:"class"`
-	Health    int     `json:"health"`
-	MaxHealth int     `json:"max_health"`
-}
-
-// Message types (should match server)
-type MessageType string
-
-const (
-	MsgPlayerJoin   MessageType = "player_join"
-	MsgPlayerLeave  MessageType = "player_leave"
-	MsgPlayerMove   MessageType = "player_move"
-	MsgPlayerAction MessageType = "player_action"
-	MsgGameState    MessageType = "game_state"
-	MsgError        MessageType = "error"
-)
-
-type Message struct {
-	Type      MessageType     `json:"type"`
-	PlayerID  string          `json:"player_id,omitempty"`
-	Data      json.RawMessage `json:"data,omitempty"`
-	Timestamp int64           `json:"timestamp"`
-}
 
 // GameClient handles the client-side game logic
 type GameClient struct {
 	conn          *websocket.Conn
-	players       map[string]*Player
+	players       map[string]*types.Player
 	localPlayerID string
 	mutex         sync.RWMutex
 	connected     bool
@@ -60,7 +32,7 @@ type GameClient struct {
 // NewGameClient creates a new game client instance
 func NewGameClient() *GameClient {
 	return &GameClient{
-		players:      make(map[string]*Player),
+		players:      make(map[string]*types.Player),
 		moveThrottle: 50 * time.Millisecond, // Limit movement updates to 20/sec
 		messages:     make([]string, 0),
 		shouldClose:  false,
@@ -99,7 +71,7 @@ func (g *GameClient) handleMessages() {
 	}()
 
 	for {
-		var msg Message
+		var msg types.Message
 		err := g.conn.ReadJSON(&msg)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -114,10 +86,10 @@ func (g *GameClient) handleMessages() {
 }
 
 // processMessage handles incoming server messages
-func (g *GameClient) processMessage(msg Message) {
+func (g *GameClient) processMessage(msg types.Message) {
 	switch msg.Type {
-	case MsgPlayerJoin:
-		var player Player
+	case types.MsgPlayerJoin:
+		var player types.Player
 		if err := json.Unmarshal(msg.Data, &player); err != nil {
 			log.Printf("Error unmarshaling player join: %v", err)
 			return
@@ -141,7 +113,7 @@ func (g *GameClient) processMessage(msg Message) {
 			g.addMessage(fmt.Sprintf("%s joined the game", player.Name))
 		}
 
-	case MsgPlayerLeave:
+	case types.MsgPlayerLeave:
 		g.mutex.Lock()
 		var playerName string
 		if player, exists := g.players[msg.PlayerID]; exists {
@@ -155,7 +127,7 @@ func (g *GameClient) processMessage(msg Message) {
 			g.addMessage(fmt.Sprintf("%s left the game", playerName))
 		}
 
-	case MsgPlayerMove:
+	case types.MsgPlayerMove:
 		var moveData struct {
 			X float64 `json:"x"`
 			Y float64 `json:"y"`
@@ -173,10 +145,10 @@ func (g *GameClient) processMessage(msg Message) {
 		}
 		g.mutex.Unlock()
 
-	case MsgPlayerAction:
+	case types.MsgPlayerAction:
 		g.addMessage(fmt.Sprintf("Player %s used an action", msg.PlayerID[:8]))
 
-	case MsgError:
+	case types.MsgError:
 		g.addMessage(fmt.Sprintf("Server error: %s", string(msg.Data)))
 
 	default:
@@ -185,7 +157,7 @@ func (g *GameClient) processMessage(msg Message) {
 }
 
 // sendMessage sends a message to the server
-func (g *GameClient) sendMessage(msgType MessageType, data interface{}) error {
+func (g *GameClient) sendMessage(msgType types.MessageType, data interface{}) error {
 	if !g.connected || g.conn == nil {
 		return fmt.Errorf("not connected to server")
 	}
@@ -195,7 +167,7 @@ func (g *GameClient) sendMessage(msgType MessageType, data interface{}) error {
 		return err
 	}
 
-	msg := Message{
+	msg := types.Message{
 		Type:      msgType,
 		Data:      jsonData,
 		Timestamp: time.Now().UnixMilli(),
@@ -275,7 +247,7 @@ func (g *GameClient) handleInput() {
 
 	// Handle action key (spacebar for now)
 	if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
-		g.sendMessage(MsgPlayerAction, map[string]string{
+		g.sendMessage(types.MsgPlayerAction, map[string]string{
 			"action": "basic_attack",
 		})
 	}
@@ -294,7 +266,7 @@ func (g *GameClient) handleInput() {
 			"y": newY,
 		}
 
-		if err := g.sendMessage(MsgPlayerMove, moveData); err != nil {
+		if err := g.sendMessage(types.MsgPlayerMove, moveData); err != nil {
 			log.Printf("Error sending move: %v", err)
 		}
 
@@ -334,7 +306,7 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 }
 
 // drawPlayer renders a player on screen
-func (g *GameClient) drawPlayer(screen *ebiten.Image, player *Player) {
+func (g *GameClient) drawPlayer(screen *ebiten.Image, player *types.Player) {
 	// Simple colored rectangle for now
 	playerColor := color.RGBA{0x80, 0x80, 0xff, 0xff} // Blue for other players
 	if player.ID == g.localPlayerID {
