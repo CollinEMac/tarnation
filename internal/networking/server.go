@@ -89,7 +89,7 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	welcomeMsg := types.Message{
 		Type:     types.MsgPlayerJoin,
 		PlayerID: playerID,
-		Data:     s.marshalPlayer(player),
+		Data:     s.marshal(player),
 	}
 
 	if err := conn.WriteJSON(welcomeMsg); err != nil {
@@ -108,7 +108,7 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		existingPlayerMsg := types.Message{
 			Type:     types.MsgPlayerJoin,
 			PlayerID: existingPlayerID,
-			Data:     s.marshalPlayer(existingPlayer),
+			Data:     s.marshal(existingPlayer),
 		}
 
 		if err := conn.WriteJSON(existingPlayerMsg); err != nil {
@@ -121,7 +121,7 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		for enemyID, enemy := range s.enemies {
 			enemyMsg := types.Message{
 				Type: types.MsgEnemySpawn,
-				Data: s.marshalEnemy(enemy),
+				Data: s.marshal(enemy),
 			}
 
 			if err := conn.WriteJSON(enemyMsg); err != nil {
@@ -135,7 +135,7 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.broadcast <- types.Message{
 		Type:     types.MsgPlayerJoin,
 		PlayerID: playerID,
-		Data:     s.marshalPlayer(player),
+		Data:     s.marshal(player),
 	}
 
 	// Handle player messages
@@ -281,14 +281,14 @@ func (s *GameServer) spawnInitialEnemies() {
 		// Broadcast enemy spawn to all players
 		s.broadcast <- types.Message{
 			Type: types.MsgEnemySpawn,
-			Data: s.marshalEnemy(enemy),
+			Data: s.marshal(enemy),
 		}
 	}
 }
 
-// marshalPlayer converts player to JSON for network transmission
-func (s *GameServer) marshalPlayer(player *types.Player) json.RawMessage {
-	data, _ := json.Marshal(player)
+// marshal converts any struct to JSON for network transmission
+func (s *GameServer) marshal(v interface{}) json.RawMessage {
+	data, _ := json.Marshal(v)
 	return data
 }
 
@@ -334,13 +334,8 @@ func (s *GameServer) handleCombat(attacker *types.Player, targetEnemyID string) 
 		// Enemy still alive - broadcast health update
 		s.broadcast <- types.Message{
 			Type: types.MsgEnemyUpdate,
-			Data: s.marshalEnemy(enemy),
+			Data: s.marshal(enemy),
 		}
 	}
 }
 
-// marshalEnemy converts enemy to JSON for network transmission
-func (s *GameServer) marshalEnemy(enemy *types.Enemy) json.RawMessage {
-	data, _ := json.Marshal(enemy)
-	return data
-}
