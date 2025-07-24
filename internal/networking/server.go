@@ -50,6 +50,7 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Create new player
 	playerID := uuid.New().String()
+	weaponID := uuid.New().String()
 	player := &types.Player{
 		ID:        playerID,
 		Name:      "Player " + playerID[:8], // Default name
@@ -59,6 +60,14 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Health:    100,
 		MaxHealth: 100,
 		Conn:      conn,
+		Weapon: &types.Weapon{
+			ID:         weaponID,
+			Name:       "Wooden Sword",
+			Name:       "Starter Sword",
+			Damage:     5,
+			Range:      1,
+			WeaponType: "sword",
+		},
 	}
 
 	// Add player to server

@@ -39,7 +39,7 @@ type Player struct {
 	MaxHealth int             `json:"max_health"`
 	Conn      *websocket.Conn `json:"-"` // Only used on server side
 	Target    int             `json:"target"`
-	Weapon    *Weapon `json:"weapon,omitempty"`
+	Weapon    weapon `json:"weapon"`
 }
 
 // Weapon represents the weapon equipped by the player or enemy
@@ -61,5 +61,4 @@ type Enemy struct {
 	Health    int     `json:"health"`
 	MaxHealth int     `json:"max_health"`
 	Target    int     `json:"target"`
-	Weapon    *Weapon `json:"weapon,omitempty"`
 }
