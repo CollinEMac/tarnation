@@ -20,6 +20,7 @@ import (
 type GameClient struct {
 	conn          *websocket.Conn
 	players       map[string]*types.Player
+	enemies       map[string]*types.Enemy
 	localPlayerID string
 	mutex         sync.RWMutex
 	connected     bool
@@ -33,6 +34,7 @@ type GameClient struct {
 func NewGameClient() *GameClient {
 	return &GameClient{
 		players:      make(map[string]*types.Player),
+		enemies:      make(map[string]*types.Enemy),
 		moveThrottle: 16 * time.Millisecond, // Limit movement updates to ~60/sec to match render loop
 		messages:     make([]string, 0),
 		shouldClose:  false,
@@ -147,6 +149,34 @@ func (g *GameClient) processMessage(msg types.Message) {
 
 	case types.MsgPlayerAction:
 		g.addMessage(fmt.Sprintf("Player %s used an action", msg.PlayerID[:8]))
+
+	case types.MsgEnemySpawn:
+		var enemy types.Enemy
+		if err := json.Unmarshal(msg.Data, &enemy); err != nil {
+			log.Printf("Error unmarshaling enemy spawn: %v", err)
+			return
+		}
+
+		g.mutex.Lock()
+		g.enemies[enemy.ID] = &enemy
+		g.mutex.Unlock()
+
+		g.addMessage(fmt.Sprintf("Enemy %s spawned", enemy.Name))
+
+	case types.MsgEnemyUpdate:
+		var enemy types.Enemy
+		if err := json.Unmarshal(msg.Data, &enemy); err != nil {
+			log.Printf("Error unmarshaling enemy update: %v", err)
+			return
+		}
+
+		g.mutex.Lock()
+		if existingEnemy, exists := g.enemies[enemy.ID]; exists {
+			existingEnemy.X = enemy.X
+			existingEnemy.Y = enemy.Y
+			existingEnemy.Health = enemy.Health
+		}
+		g.mutex.Unlock()
 
 	case types.MsgError:
 		g.addMessage(fmt.Sprintf("Server error: %s", string(msg.Data)))
@@ -279,6 +309,24 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 	// Clear screen with dark background
 	screen.Fill(color.RGBA{0x20, 0x20, 0x20, 0xff})
 
+  // Copy enemy data to avoid holding locks during rendering
+	g.mutex.RLock()
+
+	// Create a snapshot of players to avoid holding lock during draw
+	enemySnapshot := make([]*types.Enemy, 0, len(g.enemies))
+	for _, enemy := range g.enemies {
+		// Create copy of enemy data
+		enemyCopy := *enemy
+		enemySnapshot = append(enemySnapshot, &enemyCopy)
+	}
+	g.mutex.RUnlock()
+
+	// Draw all enemies without holding any locks
+	for _, enemy := range enemySnapshot {
+		g.drawEnemy(screen, enemy)
+	}
+
+	// Players should be drawn last so they are in front
 	// Copy player data to avoid holding locks during rendering
 	g.mutex.RLock()
 	connected := g.connected
@@ -333,12 +381,30 @@ func (g *GameClient) drawPlayer(screen *ebiten.Image, player *types.Player) {
 	barHeight := 4.0
 	healthPercent := float64(player.Health) / float64(player.MaxHealth)
 
-	// Background (red)
-	ebitenutil.DrawRect(screen, player.X-barWidth/2, player.Y+15, barWidth, barHeight, color.RGBA{0xff, 0x00, 0x00, 0xff})
-
 	// Health (green)
 	ebitenutil.DrawRect(screen, player.X-barWidth/2, player.Y+15, barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
 }
+
+// drawEnemy renders a single enemy on the screen
+func (g *GameClient) drawEnemy(screen *ebiten.Image, enemy *types.Enemy) {
+	// Simple colored rectangle for now
+	enemyColor := color.RGBA{0xff, 0xff, 0xff, 0xff} // white for now
+
+	// Draw enemy as a 20x20 rectangle
+	ebitenutil.DrawRect(screen, enemy.X-10, enemy.Y-10, 20, 20, enemyColor)
+
+	// Draw enemy name
+	ebitenutil.DebugPrintAt(screen, enemy.Name, int(enemy.X-20), int(enemy.Y-25))
+
+	// Draw health bar
+	barWidth := 30.0
+	barHeight := 4.0
+	healthPercent := float64(enemy.Health) / float64(enemy.MaxHealth)
+
+	// Health (green)
+	ebitenutil.DrawRect(screen, enemy.X-barWidth/2, enemy.Y+15, barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
+}
+
 
 // drawUI renders the game UI
 func (g *GameClient) drawUI(screen *ebiten.Image) {

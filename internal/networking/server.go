@@ -15,6 +15,7 @@ import (
 // GameServer manages all connected players and game instances
 type GameServer struct {
 	players   map[string]*types.Player
+	enemies map[string]*types.Enemy
 	mutex     sync.RWMutex
 	upgrader  websocket.Upgrader
 	broadcast chan types.Message
@@ -24,6 +25,7 @@ type GameServer struct {
 func NewGameServer() *GameServer {
 	server := &GameServer{
 		players:   make(map[string]*types.Player),
+		enemies:   make(map[string]*types.Enemy),
 		broadcast: make(chan types.Message, 256),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
@@ -67,6 +69,12 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Player %s connected", playerID)
 
+	// Spawn initial enemies if this is the first player
+	if (len(s.players) == 1) {
+		log.Println("First player joined, spawning initial enemies")
+		go s.spawnInitialEnemies() // Run in separate goroutine to avoid race condition
+	}
+
 	// Send welcome message
 	welcomeMsg := types.Message{
 		Type:     types.MsgPlayerJoin,
@@ -95,6 +103,18 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 		if err := conn.WriteJSON(existingPlayerMsg); err != nil {
 			log.Printf("Error sending existing player %s data to new player: %v", existingPlayerID, err)
+		}
+	}
+
+	// Send information about all existing enemies to the new player
+	for enemyID, enemy := range s.enemies {
+		enemyMsg := types.Message{
+			Type: types.MsgEnemySpawn,
+			Data: s.marshalEnemy(enemy),
+		}
+
+		if err := conn.WriteJSON(enemyMsg); err != nil {
+			log.Printf("Error sending existing enemy %s data to new player: %v", enemyID, err)
 		}
 	}
 	s.mutex.RUnlock()
@@ -213,8 +233,40 @@ func (s *GameServer) GetConnectedPlayers() int {
 	return len(s.players)
 }
 
+// spawnInitialEnemies creates the starting enemies for the game world
+func (s *GameServer) spawnInitialEnemies() {
+	for i := 0; i < 3; i++ {
+		enemyID := uuid.New().String()
+		enemy := &types.Enemy{
+			ID:        enemyID,
+			Name:      "Enemy " + enemyID[:8],
+			X:         200 + float64(i*150), // Spread enemies across the map
+			Y:         200 + float64(i*50),
+			EnemyType: "basic",
+			Health:    50,
+			MaxHealth: 50,
+			Target:    0, // No target initially
+		}
+		
+		s.enemies[enemyID] = enemy
+		log.Printf("Spawned enemy %s at (%.0f, %.0f)", enemy.Name, enemy.X, enemy.Y)
+		
+		// Broadcast enemy spawn to all players
+		s.broadcast <- types.Message{
+			Type: types.MsgEnemySpawn,
+			Data: s.marshalEnemy(enemy),
+		}
+	}
+}
+
 // marshalPlayer converts player to JSON for network transmission
 func (s *GameServer) marshalPlayer(player *types.Player) json.RawMessage {
 	data, _ := json.Marshal(player)
+	return data
+}
+
+// marshalEnemy converts enemy to JSON for network transmission
+func (s *GameServer) marshalEnemy(enemy *types.Enemy) json.RawMessage {
+	data, _ := json.Marshal(enemy)
 	return data
 }

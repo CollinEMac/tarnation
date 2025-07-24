@@ -15,6 +15,8 @@ const (
 	MsgPlayerMove   MessageType = "player_move"
 	MsgPlayerAction MessageType = "player_action"
 	MsgGameState    MessageType = "game_state"
+	MsgEnemySpawn   MessageType = "enemy_spawn"
+	MsgEnemyUpdate  MessageType = "enemy_update"
 	MsgError        MessageType = "error"
 )
 
@@ -36,4 +38,17 @@ type Player struct {
 	Health    int             `json:"health"`
 	MaxHealth int             `json:"max_health"`
 	Conn      *websocket.Conn `json:"-"` // Only used on server side
+	Target    int             `json:"target"`
+}
+
+// Enemy represent a targetable enemy in the game
+type Enemy struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	X         float64         `json:"x"`
+	Y         float64         `json:"y"`
+	EnemyType string          `json:"enemy_type"`
+	Health    int             `json:"health"`
+	MaxHealth int             `json:"max_health"`
+	Target    int             `json:"target"`
 }
