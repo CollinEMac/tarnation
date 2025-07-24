@@ -79,6 +79,26 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Send information about all existing players to the new player
+	s.mutex.RLock()
+	for existingPlayerID, existingPlayer := range s.players {
+		// Skip sending the new player their own data again
+		if existingPlayerID == playerID {
+			continue
+		}
+
+		existingPlayerMsg := types.Message{
+			Type:     types.MsgPlayerJoin,
+			PlayerID: existingPlayerID,
+			Data:     s.marshalPlayer(existingPlayer),
+		}
+
+		if err := conn.WriteJSON(existingPlayerMsg); err != nil {
+			log.Printf("Error sending existing player %s data to new player: %v", existingPlayerID, err)
+		}
+	}
+	s.mutex.RUnlock()
+
 	// Broadcast player join to all other players
 	s.broadcast <- types.Message{
 		Type:     types.MsgPlayerJoin,
