@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/CollinEMac/tarnation/internal/types"
 	"github.com/google/uuid"
@@ -63,10 +64,10 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Weapon: &types.Weapon{
 			ID:         weaponID,
 			Name:       "Wooden Sword",
-			Name:       "Starter Sword",
 			Damage:     5,
 			Range:      1,
 			WeaponType: "sword",
+			Delay:      time.Second,
 		},
 	}
 
@@ -203,14 +204,29 @@ func (s *GameServer) handleMessage(player *types.Player, msg types.Message) {
 		}
 
 	case types.MsgPlayerAction:
-		// Handle player actions (abilities, attacks, etc.)
-		log.Printf("Player %s used action: %s", player.ID, string(msg.Data))
+		var actionData struct {
+			Action string `json:"action"`
+			Target string `json:"target,omitempty"`
+		}
 
-		// Broadcast action to other players
-		s.broadcast <- types.Message{
-			Type:     types.MsgPlayerAction,
-			PlayerID: player.ID,
-			Data:     msg.Data,
+		if err := json.Unmarshal(msg.Data, &actionData); err != nil {
+			log.Printf("Error unmarshaling action data: %v", err)
+			return
+		}
+
+		log.Printf("DEBUG: Parsed action - Action: '%s', Target: '%s'", actionData.Action, actionData.Target)
+
+		if actionData.Action == "attack" && actionData.Target != "" {
+			log.Printf("DEBUG: Calling handleCombat for player %s attacking %s", player.ID, actionData.Target)
+			s.handleCombat(player, actionData.Target)
+		} else {
+			// Handle other actions or broadcast generic actions
+			log.Printf("Player %s used action: %s", player.ID, actionData.Action)
+			s.broadcast <- types.Message{
+				Type:     types.MsgPlayerAction,
+				PlayerID: player.ID,
+				Data:     msg.Data,
+			}
 		}
 
 	default:
@@ -274,6 +290,53 @@ func (s *GameServer) spawnInitialEnemies() {
 func (s *GameServer) marshalPlayer(player *types.Player) json.RawMessage {
 	data, _ := json.Marshal(player)
 	return data
+}
+
+// handleCombat processes player attacks on enemies
+func (s *GameServer) handleCombat(attacker *types.Player, targetEnemyID string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	// Find the target enemy
+	enemy, exists := s.enemies[targetEnemyID]
+	if !exists {
+		log.Printf("Combat: Enemy %s not found", targetEnemyID)
+		return
+	}
+
+	// Calculate damage
+	damage := 1 // Default damage
+	if attacker.Weapon != nil {
+		damage = attacker.Weapon.Damage
+	}
+
+	// Apply damage
+	enemy.Health -= damage
+	log.Printf("Player %s attacked %s for %d damage (HP: %d/%d)",
+		attacker.Name, enemy.Name, damage, enemy.Health, enemy.MaxHealth)
+
+	if enemy.Health <= 0 {
+		// Enemy is dead - remove from game
+		delete(s.enemies, targetEnemyID)
+		log.Printf("Enemy %s has been defeated", enemy.Name)
+
+		// Broadcast enemy death
+		deathData := map[string]interface{}{
+			"id":   targetEnemyID,
+			"dead": true,
+		}
+		deathJSON, _ := json.Marshal(deathData)
+		s.broadcast <- types.Message{
+			Type: types.MsgEnemyUpdate,
+			Data: deathJSON,
+		}
+	} else {
+		// Enemy still alive - broadcast health update
+		s.broadcast <- types.Message{
+			Type: types.MsgEnemyUpdate,
+			Data: s.marshalEnemy(enemy),
+		}
+	}
 }
 
 // marshalEnemy converts enemy to JSON for network transmission

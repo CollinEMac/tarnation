@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/color"
 	"log"
+	"math"
 	"sync"
 	"time"
 
@@ -17,16 +18,18 @@ import (
 
 // GameClient handles the client-side game logic
 type GameClient struct {
-	conn          *websocket.Conn
-	players       map[string]*types.Player
-	enemies       map[string]*types.Enemy
-	localPlayerID string
-	mutex         sync.RWMutex
-	connected     bool
-	lastMoveTime  time.Time
-	moveThrottle  time.Duration
-	messages      []string // For displaying debug info
-	shouldClose   bool     // Flag to indicate clean shutdown
+	conn           *websocket.Conn
+	players        map[string]*types.Player
+	enemies        map[string]*types.Enemy
+	localPlayerID  string
+	targetEnemyID  string    // ID of currently targeted enemy
+	lastAttackTime time.Time // For attack timing
+	mutex          sync.RWMutex
+	connected      bool
+	lastMoveTime   time.Time
+	moveThrottle   time.Duration
+	messages       []string // For displaying debug info
+	shouldClose    bool     // Flag to indicate clean shutdown
 }
 
 // NewGameClient creates a new game client instance
@@ -163,19 +166,49 @@ func (g *GameClient) processMessage(msg types.Message) {
 		g.addMessage(fmt.Sprintf("Enemy %s spawned", enemy.Name))
 
 	case types.MsgEnemyUpdate:
-		var enemy types.Enemy
-		if err := json.Unmarshal(msg.Data, &enemy); err != nil {
-			log.Printf("Error unmarshaling enemy update: %v", err)
-			return
+		// Try to parse as death message first
+		var deathData struct {
+			ID   string `json:"id"`
+			Dead bool   `json:"dead,omitempty"`
 		}
 
-		g.mutex.Lock()
-		if existingEnemy, exists := g.enemies[enemy.ID]; exists {
-			existingEnemy.X = enemy.X
-			existingEnemy.Y = enemy.Y
-			existingEnemy.Health = enemy.Health
+		if err := json.Unmarshal(msg.Data, &deathData); err == nil && deathData.Dead {
+			// Enemy is dead - remove from game
+			g.mutex.Lock()
+			var enemyName string
+			if enemy, exists := g.enemies[deathData.ID]; exists {
+				enemyName = enemy.Name
+				delete(g.enemies, deathData.ID)
+
+				// Clear target if this was our target
+				if g.targetEnemyID == deathData.ID {
+					g.targetEnemyID = ""
+				}
+			}
+			g.mutex.Unlock()
+
+			// Add message after releasing the lock to avoid deadlock
+			if enemyName != "" {
+				g.addMessage(fmt.Sprintf("Enemy %s has been defeated!", enemyName))
+			}
+		} else {
+			// Parse as full enemy update
+			var enemy types.Enemy
+			if err := json.Unmarshal(msg.Data, &enemy); err != nil {
+				log.Printf("Error unmarshaling enemy update: %v", err)
+				return
+			}
+
+			g.mutex.Lock()
+			if existingEnemy, exists := g.enemies[enemy.ID]; exists {
+				log.Printf("DEBUG: Updating enemy %s health from %d to %d", enemy.ID[:8], existingEnemy.Health, enemy.Health)
+				existingEnemy.X = enemy.X
+				existingEnemy.Y = enemy.Y
+				existingEnemy.Health = enemy.Health
+				existingEnemy.MaxHealth = enemy.MaxHealth
+			}
+			g.mutex.Unlock()
 		}
-		g.mutex.Unlock()
 
 	case types.MsgError:
 		g.addMessage(fmt.Sprintf("Server error: %s", string(msg.Data)))
@@ -274,11 +307,65 @@ func (g *GameClient) handleInput() {
 		moved = true
 	}
 
-	// Handle action key (spacebar for now)
+	// Handle player targeting
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
+		mouseX, mouseY := ebiten.CursorPosition()
+		if enemyID := g.getEnemyAt(float64(mouseX), float64(mouseY)); enemyID != "" {
+			g.targetEnemyID = enemyID
+			g.addMessage(fmt.Sprintf("Targeting enemy: %s", enemyID[:8]))
+		} else {
+			g.targetEnemyID = "" // Clear target if clicking empty space
+		}
+	}
+
 	if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
 		g.sendMessage(types.MsgPlayerAction, map[string]string{
 			"action": "basic_attack",
 		})
+	}
+
+	// Handle auto-combat with targeted enemy
+	if g.targetEnemyID != "" {
+		g.mutex.RLock()
+		targetEnemy, enemyExists := g.enemies[g.targetEnemyID]
+		g.mutex.RUnlock()
+
+		if !enemyExists {
+			// Target is dead or doesn't exist, clear target
+			g.targetEnemyID = ""
+		} else {
+			// Calculate distance to target
+			dx := targetEnemy.X - localPlayer.X
+			dy := targetEnemy.Y - localPlayer.Y
+			distance := math.Sqrt(dx*dx + dy*dy)
+
+			weaponRange := 30.0        // Default range
+			weaponDelay := time.Second // Default weapon speed
+			if localPlayer.Weapon != nil {
+				weaponRange = float64(localPlayer.Weapon.Range * 25) // Scale range
+				weaponDelay = localPlayer.Weapon.Delay
+			}
+
+			if distance > weaponRange {
+				// Move toward target
+				moveSpeed := 3.0
+				if distance > 0 {
+					// Normalize direction and move
+					newX = localPlayer.X + (dx/distance)*moveSpeed
+					newY = localPlayer.Y + (dy/distance)*moveSpeed
+					moved = true
+				}
+			} else {
+				// In range - attack if enough time has passed
+				if time.Since(g.lastAttackTime) > weaponDelay {
+					g.sendMessage(types.MsgPlayerAction, map[string]interface{}{
+						"action": "attack",
+						"target": g.targetEnemyID,
+					})
+					g.lastAttackTime = time.Now()
+				}
+			}
+		}
 	}
 
 	// Send movement update if player moved
@@ -431,6 +518,21 @@ func (g *GameClient) drawUI(screen *ebiten.Image) {
 // Layout implements ebiten.Game interface
 func (g *GameClient) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
 	return 800, 600
+}
+
+// getEnemyAt checks if there's an enemy at the given screen coordinates
+func (g *GameClient) getEnemyAt(x, y float64) string {
+	g.mutex.RLock()
+	defer g.mutex.RUnlock()
+
+	for enemyID, enemy := range g.enemies {
+		// Check if click is within enemy bounds (20x20 rectangle)
+		if x >= enemy.X-10 && x <= enemy.X+10 &&
+			y >= enemy.Y-10 && y <= enemy.Y+10 {
+			return enemyID
+		}
+	}
+	return ""
 }
 
 // addMessage adds a message to the message log

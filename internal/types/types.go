@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -39,16 +40,17 @@ type Player struct {
 	MaxHealth int             `json:"max_health"`
 	Conn      *websocket.Conn `json:"-"` // Only used on server side
 	Target    int             `json:"target"`
-	Weapon    *Weapon `json:"weapon,omitempty"`
+	Weapon    *Weapon         `json:"weapon,omitempty"`
 }
 
 // Weapon represents the weapon equipped by the player or enemy
 type Weapon struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Damage    int             `json:"damage"`
-	Range     int             `json:"range"`
-	WeaponType string         `json:"weapon_type"`
+	ID         string        `json:"id"`
+	Name       string        `json:"name"`
+	Damage     int           `json:"damage"`
+	Range      int           `json:"range"`
+	WeaponType string        `json:"weapon_type"`
+	Delay      time.Duration `'json:"delay"`
 }
 
 // Enemy represent a targetable enemy in the game
