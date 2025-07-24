@@ -64,12 +64,13 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Add player to server
 	s.mutex.Lock()
 	s.players[playerID] = player
+	isFirstPlayer := len(s.players) == 1
 	s.mutex.Unlock()
 
 	log.Printf("Player %s connected", playerID)
 
 	// Spawn initial enemies if this is the first player
-	if len(s.players) == 1 {
+	if isFirstPlayer {
 		log.Println("First player joined, spawning initial enemies")
 		go s.spawnInitialEnemies() // Run in separate goroutine to avoid race condition
 	}
@@ -105,15 +106,17 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Send information about all existing enemies to the new player
-	for enemyID, enemy := range s.enemies {
-		enemyMsg := types.Message{
-			Type: types.MsgEnemySpawn,
-			Data: s.marshalEnemy(enemy),
-		}
+	// Send information about all existing enemies to the new player (skip first player)
+	if !isFirstPlayer {
+		for enemyID, enemy := range s.enemies {
+			enemyMsg := types.Message{
+				Type: types.MsgEnemySpawn,
+				Data: s.marshalEnemy(enemy),
+			}
 
-		if err := conn.WriteJSON(enemyMsg); err != nil {
-			log.Printf("Error sending existing enemy %s data to new player: %v", enemyID, err)
+			if err := conn.WriteJSON(enemyMsg); err != nil {
+				log.Printf("Error sending existing enemy %s data to new player: %v", enemyID, err)
+			}
 		}
 	}
 	s.mutex.RUnlock()
