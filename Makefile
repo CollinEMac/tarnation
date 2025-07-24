@@ -73,6 +73,20 @@ build-all: $(BINARY_DIR)
 	GOOS=darwin GOARCH=amd64 go build -o $(BINARY_DIR)/tarnation-server-mac ./cmd/server
 	GOOS=darwin GOARCH=amd64 go build -o $(BINARY_DIR)/tarnation-client-mac ./cmd/client
 
+# Run both server and client together (server in background)
+.PHONY: run
+run: build
+	@echo "Starting server in background..."
+	@./$(SERVER_BINARY) & 
+	@SERVER_PID=$$!; \
+	echo "Server started with PID $$SERVER_PID"; \
+	echo "Waiting 2 seconds for server to initialize..."; \
+	sleep 2; \
+	echo "Starting client..."; \
+	./$(CLIENT_BINARY); \
+	echo "Client stopped, killing server..."; \
+	kill $$SERVER_PID 2>/dev/null || true
+
 # Development: run server and client in separate terminals
 .PHONY: dev
 dev:
@@ -89,6 +103,7 @@ help:
 	@echo "  build-client  - Build client only"
 	@echo "  run-server    - Build and run server"
 	@echo "  run-client    - Build and run client"
+	@echo "  run     			 - Build and run server + client together"
 	@echo "  build-all     - Cross-compile for Linux, Windows, and macOS"
 	@echo "  clean         - Remove built binaries"
 	@echo "  deps          - Install/update dependencies"
