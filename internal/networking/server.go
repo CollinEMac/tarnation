@@ -11,11 +11,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-
 // GameServer manages all connected players and game instances
 type GameServer struct {
 	players   map[string]*types.Player
-	enemies map[string]*types.Enemy
+	enemies   map[string]*types.Enemy
 	mutex     sync.RWMutex
 	upgrader  websocket.Upgrader
 	broadcast chan types.Message
@@ -70,7 +69,7 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Player %s connected", playerID)
 
 	// Spawn initial enemies if this is the first player
-	if (len(s.players) == 1) {
+	if len(s.players) == 1 {
 		log.Println("First player joined, spawning initial enemies")
 		go s.spawnInitialEnemies() // Run in separate goroutine to avoid race condition
 	}
@@ -247,10 +246,10 @@ func (s *GameServer) spawnInitialEnemies() {
 			MaxHealth: 50,
 			Target:    0, // No target initially
 		}
-		
+
 		s.enemies[enemyID] = enemy
 		log.Printf("Spawned enemy %s at (%.0f, %.0f)", enemy.Name, enemy.X, enemy.Y)
-		
+
 		// Broadcast enemy spawn to all players
 		s.broadcast <- types.Message{
 			Type: types.MsgEnemySpawn,

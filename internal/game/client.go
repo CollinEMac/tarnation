@@ -15,7 +15,6 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
-
 // GameClient handles the client-side game logic
 type GameClient struct {
 	conn          *websocket.Conn
@@ -309,7 +308,7 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 	// Clear screen with dark background
 	screen.Fill(color.RGBA{0x20, 0x20, 0x20, 0xff})
 
-  // Copy enemy data to avoid holding locks during rendering
+	// Copy enemy data to avoid holding locks during rendering
 	g.mutex.RLock()
 
 	// Create a snapshot of players to avoid holding lock during draw
@@ -332,7 +331,7 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 	connected := g.connected
 	playerCount := len(g.players)
 	localPlayerID := g.localPlayerID
-	
+
 	// Create a snapshot of players to avoid holding lock during draw
 	playerSnapshot := make([]*types.Player, 0, len(g.players))
 	for _, player := range g.players {
@@ -404,7 +403,6 @@ func (g *GameClient) drawEnemy(screen *ebiten.Image, enemy *types.Enemy) {
 	// Health (green)
 	ebitenutil.DrawRect(screen, enemy.X-barWidth/2, enemy.Y+15, barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
 }
-
 
 // drawUI renders the game UI
 func (g *GameClient) drawUI(screen *ebiten.Image) {

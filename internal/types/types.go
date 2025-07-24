@@ -43,12 +43,12 @@ type Player struct {
 
 // Enemy represent a targetable enemy in the game
 type Enemy struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	X         float64         `json:"x"`
-	Y         float64         `json:"y"`
-	EnemyType string          `json:"enemy_type"`
-	Health    int             `json:"health"`
-	MaxHealth int             `json:"max_health"`
-	Target    int             `json:"target"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	X         float64 `json:"x"`
+	Y         float64 `json:"y"`
+	EnemyType string  `json:"enemy_type"`
+	Health    int     `json:"health"`
+	MaxHealth int     `json:"max_health"`
+	Target    int     `json:"target"`
 }
