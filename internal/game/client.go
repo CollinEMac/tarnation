@@ -47,7 +47,6 @@ func NewGameClient() *GameClient {
 
 // ConnectToServer establishes WebSocket connection to game server
 func (g *GameClient) ConnectToServer(url string) error {
-	log.Printf("DEBUG: Dialing WebSocket to %s", url)
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to server: %w", err)
@@ -55,13 +54,11 @@ func (g *GameClient) ConnectToServer(url string) error {
 
 	g.conn = conn
 	g.connected = true
-	log.Printf("DEBUG: WebSocket connected, starting message handler")
 
 	// Start message handling goroutine
 	go g.handleMessages()
 
 	g.addMessage("Connected to server!")
-	log.Printf("DEBUG: ConnectToServer completed successfully")
 	return nil
 }
 
@@ -152,7 +149,6 @@ func (g *GameClient) processMessage(msg types.Message) {
 		g.mutex.Unlock()
 
 	case types.MsgPlayerAction:
-		g.addMessage(fmt.Sprintf("Player %s used an action", msg.PlayerID[:8]))
 
 	case types.MsgEnemySpawn:
 		var enemy types.Enemy
@@ -165,7 +161,6 @@ func (g *GameClient) processMessage(msg types.Message) {
 		g.enemies[enemy.ID] = &enemy
 		g.mutex.Unlock()
 
-		g.addMessage(fmt.Sprintf("Enemy %s spawned", enemy.Name))
 
 	case types.MsgEnemyUpdate:
 		// Try to parse as death message first
@@ -203,7 +198,6 @@ func (g *GameClient) processMessage(msg types.Message) {
 
 			g.mutex.Lock()
 			if existingEnemy, exists := g.enemies[enemy.ID]; exists {
-				log.Printf("DEBUG: Updating enemy %s health from %d to %d", enemy.ID[:8], existingEnemy.Health, enemy.Health)
 				existingEnemy.X = enemy.X
 				existingEnemy.Y = enemy.Y
 				existingEnemy.Health = enemy.Health
@@ -335,7 +329,6 @@ func (g *GameClient) handleInput() {
 			// Also select the enemy for nameplate display
 			g.selectedEntityID = enemyID
 			g.selectedEntityType = "enemy"
-			g.addMessage(fmt.Sprintf("Targeting enemy: %s", enemyID[:8]))
 		} else {
 			g.targetEnemyID = "" // Clear target if clicking empty space
 		}
@@ -525,17 +518,6 @@ func (g *GameClient) drawUI(screen *ebiten.Image) {
 
 	// Controls
 	ebitenutil.DebugPrintAt(screen, "Controls: WASD/Arrows to move, Space for action, Left click to select", 10, 30)
-
-	// Recent messages (chat/log)
-	if len(g.messages) > 0 {
-		ebitenutil.DebugPrintAt(screen, "Recent messages:", 10, 60)
-		for i, msg := range g.messages {
-			if i >= 5 { // Show only last 5 messages
-				break
-			}
-			ebitenutil.DebugPrintAt(screen, msg, 10, 80+i*15)
-		}
-	}
 
 	// Draw nameplate for selected entity
 	g.drawNameplate(screen)
