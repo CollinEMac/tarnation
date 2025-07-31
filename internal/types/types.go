@@ -38,9 +38,15 @@ type Player struct {
 	Class     string          `json:"class"`
 	Health    int             `json:"health"`
 	MaxHealth int             `json:"max_health"`
+	Mana      int             `json:"mana"`
+	MaxMana   int             `json:"max_mana"`
 	Conn      *websocket.Conn `json:"-"` // Only used on server side
 	Target    int             `json:"target"`
 	Weapon    *Weapon         `json:"weapon,omitempty"`
+	Strength  int             `json:"strength"`
+	Agility   int             `json:"agility"`
+	Intellect int             `json:"intellect"`
+	Stamina   int             `json:"stamina"`
 }
 
 // Weapon represents the weapon equipped by the player or enemy
@@ -62,6 +68,12 @@ type Enemy struct {
 	EnemyType string  `json:"enemy_type"`
 	Health    int     `json:"health"`
 	MaxHealth int     `json:"max_health"`
+	Mana      int             `json:"mana"`
+	MaxMana   int             `json:"max_mana"`
 	Target    int     `json:"target"`
 	Weapon    *Weapon `json:"weapon,omitempty"`
+	Strength  int             `json:"strength"`
+	Agility   int             `json:"agility"`
+	Intellect int             `json:"intellect"`
+	Stamina   int             `json:"stamina"`
 }
