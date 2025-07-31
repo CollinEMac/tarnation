@@ -18,18 +18,20 @@ import (
 
 // GameClient handles the client-side game logic
 type GameClient struct {
-	conn           *websocket.Conn
-	players        map[string]*types.Player
-	enemies        map[string]*types.Enemy
-	localPlayerID  string
-	targetEnemyID  string    // ID of currently targeted enemy
-	lastAttackTime time.Time // For attack timing
-	mutex          sync.RWMutex
-	connected      bool
-	lastMoveTime   time.Time
-	moveThrottle   time.Duration
-	messages       []string // For displaying debug info
-	shouldClose    bool     // Flag to indicate clean shutdown
+	conn             *websocket.Conn
+	players          map[string]*types.Player
+	enemies          map[string]*types.Enemy
+	localPlayerID    string
+	targetEnemyID    string    // ID of currently targeted enemy
+	selectedEntityID string    // ID of currently selected entity (for nameplate)
+	selectedEntityType string  // Type of selected entity ("player" or "enemy")
+	lastAttackTime   time.Time // For attack timing
+	mutex            sync.RWMutex
+	connected        bool
+	lastMoveTime     time.Time
+	moveThrottle     time.Duration
+	messages         []string // For displaying debug info
+	shouldClose      bool     // Flag to indicate clean shutdown
 }
 
 // NewGameClient creates a new game client instance
@@ -307,11 +309,32 @@ func (g *GameClient) handleInput() {
 		moved = true
 	}
 
-	// Handle player targeting
+	// Handle player selection (left click)
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		mouseX, mouseY := ebiten.CursorPosition()
+		
+		// Check for player first (players have priority over enemies for selection)
+		if playerID := g.getPlayerAt(float64(mouseX), float64(mouseY)); playerID != "" {
+			g.selectedEntityID = playerID
+			g.selectedEntityType = "player"
+		} else if enemyID := g.getEnemyAt(float64(mouseX), float64(mouseY)); enemyID != "" {
+			g.selectedEntityID = enemyID
+			g.selectedEntityType = "enemy"
+		} else {
+			// Clear selection if clicking empty space
+			g.selectedEntityID = ""
+			g.selectedEntityType = ""
+		}
+	}
+
+	// Handle player targeting (right click)
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
 		mouseX, mouseY := ebiten.CursorPosition()
 		if enemyID := g.getEnemyAt(float64(mouseX), float64(mouseY)); enemyID != "" {
 			g.targetEnemyID = enemyID
+			// Also select the enemy for nameplate display
+			g.selectedEntityID = enemyID
+			g.selectedEntityType = "enemy"
 			g.addMessage(fmt.Sprintf("Targeting enemy: %s", enemyID[:8]))
 		} else {
 			g.targetEnemyID = "" // Clear target if clicking empty space
@@ -501,7 +524,7 @@ func (g *GameClient) drawUI(screen *ebiten.Image) {
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("Status: %s | Players: %d", status, len(g.players)))
 
 	// Controls
-	ebitenutil.DebugPrintAt(screen, "Controls: WASD/Arrows to move, Space for action", 10, 30)
+	ebitenutil.DebugPrintAt(screen, "Controls: WASD/Arrows to move, Space for action, Left click to select", 10, 30)
 
 	// Recent messages (chat/log)
 	if len(g.messages) > 0 {
@@ -512,6 +535,91 @@ func (g *GameClient) drawUI(screen *ebiten.Image) {
 			}
 			ebitenutil.DebugPrintAt(screen, msg, 10, 80+i*15)
 		}
+	}
+
+	// Draw nameplate for selected entity
+	g.drawNameplate(screen)
+}
+
+// drawNameplate renders the nameplate for the currently selected entity
+func (g *GameClient) drawNameplate(screen *ebiten.Image) {
+	g.mutex.RLock()
+	selectedID := g.selectedEntityID
+	selectedType := g.selectedEntityType
+
+	if selectedID == "" || selectedType == "" {
+		g.mutex.RUnlock()
+		return // No entity selected
+	}
+
+	var name string
+	var health, maxHealth, mana, maxMana int
+	var exists bool
+
+	if selectedType == "player" {
+		if player, ok := g.players[selectedID]; ok {
+			name = player.Name
+			health = player.Health
+			maxHealth = player.MaxHealth
+			mana = player.Mana
+			maxMana = player.MaxMana
+			exists = true
+		}
+	} else if selectedType == "enemy" {
+		if enemy, ok := g.enemies[selectedID]; ok {
+			name = enemy.Name
+			health = enemy.Health
+			maxHealth = enemy.MaxHealth
+			mana = enemy.Mana
+			maxMana = enemy.MaxMana
+			exists = true
+		}
+	}
+
+	if !exists {
+		// Entity no longer exists, clear selection
+		g.selectedEntityID = ""
+		g.selectedEntityType = ""
+		g.mutex.RUnlock()
+		return
+	}
+	g.mutex.RUnlock()
+
+	// Position nameplate in top-right area
+	nameplateX := 600
+	nameplateY := 10
+	nameplateWidth := 180
+	nameplateHeight := 80
+
+	// Draw background
+	ebitenutil.DrawRect(screen, float64(nameplateX), float64(nameplateY), float64(nameplateWidth), float64(nameplateHeight), color.RGBA{0x00, 0x00, 0x00, 0x80})
+	ebitenutil.DrawRect(screen, float64(nameplateX), float64(nameplateY), float64(nameplateWidth), 2, color.RGBA{0xff, 0xff, 0xff, 0xff})
+	ebitenutil.DrawRect(screen, float64(nameplateX), float64(nameplateY+nameplateHeight-2), float64(nameplateWidth), 2, color.RGBA{0xff, 0xff, 0xff, 0xff})
+	ebitenutil.DrawRect(screen, float64(nameplateX), float64(nameplateY), 2, float64(nameplateHeight), color.RGBA{0xff, 0xff, 0xff, 0xff})
+	ebitenutil.DrawRect(screen, float64(nameplateX+nameplateWidth-2), float64(nameplateY), 2, float64(nameplateHeight), color.RGBA{0xff, 0xff, 0xff, 0xff})
+
+	// Draw entity information
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Name: %s", name), nameplateX+5, nameplateY+5)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Health: %d/%d", health, maxHealth), nameplateX+5, nameplateY+20)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Mana: %d/%d", mana, maxMana), nameplateX+5, nameplateY+35)
+
+	// Draw health bar
+	barWidth := float64(nameplateWidth - 10)
+	barHeight := 8.0
+	healthPercent := float64(health) / float64(maxHealth)
+	
+	// Health bar background (red)
+	ebitenutil.DrawRect(screen, float64(nameplateX+5), float64(nameplateY+50), barWidth, barHeight, color.RGBA{0x80, 0x00, 0x00, 0xff})
+	// Health bar foreground (green)
+	ebitenutil.DrawRect(screen, float64(nameplateX+5), float64(nameplateY+50), barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
+
+	// Draw mana bar
+	manaPercent := float64(mana) / float64(maxMana)
+	if maxMana > 0 {
+		// Mana bar background (dark blue)
+		ebitenutil.DrawRect(screen, float64(nameplateX+5), float64(nameplateY+62), barWidth, barHeight, color.RGBA{0x00, 0x00, 0x80, 0xff})
+		// Mana bar foreground (blue)
+		ebitenutil.DrawRect(screen, float64(nameplateX+5), float64(nameplateY+62), barWidth*manaPercent, barHeight, color.RGBA{0x00, 0x80, 0xff, 0xff})
 	}
 }
 
@@ -530,6 +638,21 @@ func (g *GameClient) getEnemyAt(x, y float64) string {
 		if x >= enemy.X-10 && x <= enemy.X+10 &&
 			y >= enemy.Y-10 && y <= enemy.Y+10 {
 			return enemyID
+		}
+	}
+	return ""
+}
+
+// getPlayerAt checks if there's a player at the given screen coordinates
+func (g *GameClient) getPlayerAt(x, y float64) string {
+	g.mutex.RLock()
+	defer g.mutex.RUnlock()
+
+	for playerID, player := range g.players {
+		// Check if click is within player bounds (20x20 rectangle)
+		if x >= player.X-10 && x <= player.X+10 &&
+			y >= player.Y-10 && y <= player.Y+10 {
+			return playerID
 		}
 	}
 	return ""
