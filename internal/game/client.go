@@ -148,6 +148,23 @@ func (g *GameClient) processMessage(msg types.Message) {
 		}
 		g.mutex.Unlock()
 
+	case types.MsgPlayerUpdate:
+		var player types.Player
+		if err := json.Unmarshal(msg.Data, &player); err != nil {
+			log.Printf("Error unmarshaling player update: %v", err)
+			return
+		}
+
+		g.mutex.Lock()
+		if existingPlayer, exists := g.players[msg.PlayerID]; exists {
+			// Update player stats but keep position
+			existingPlayer.Health = player.Health
+			existingPlayer.MaxHealth = player.MaxHealth
+			existingPlayer.Mana = player.Mana
+			existingPlayer.MaxMana = player.MaxMana
+		}
+		g.mutex.Unlock()
+
 	case types.MsgPlayerAction:
 
 	case types.MsgEnemySpawn:

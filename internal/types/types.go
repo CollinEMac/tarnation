@@ -14,6 +14,7 @@ const (
 	MsgPlayerJoin   MessageType = "player_join"
 	MsgPlayerLeave  MessageType = "player_leave"
 	MsgPlayerMove   MessageType = "player_move"
+	MsgPlayerUpdate MessageType = "player_update"
 	MsgPlayerAction MessageType = "player_action"
 	MsgGameState    MessageType = "game_state"
 	MsgEnemySpawn   MessageType = "enemy_spawn"
@@ -61,19 +62,21 @@ type Weapon struct {
 
 // Enemy represent a targetable enemy in the game
 type Enemy struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	X         float64 `json:"x"`
-	Y         float64 `json:"y"`
-	EnemyType string  `json:"enemy_type"`
-	Health    int     `json:"health"`
-	MaxHealth int     `json:"max_health"`
-	Mana      int             `json:"mana"`
-	MaxMana   int             `json:"max_mana"`
-	Target    int     `json:"target"`
-	Weapon    *Weapon `json:"weapon,omitempty"`
-	Strength  int             `json:"strength"`
-	Agility   int             `json:"agility"`
-	Intellect int             `json:"intellect"`
-	Stamina   int             `json:"stamina"`
+	ID         string             `json:"id"`
+	Name       string             `json:"name"`
+	X          float64            `json:"x"`
+	Y          float64            `json:"y"`
+	EnemyType  string             `json:"enemy_type"`
+	Health     int                `json:"health"`
+	MaxHealth  int                `json:"max_health"`
+	Mana       int                `json:"mana"`
+	MaxMana    int                `json:"max_mana"`
+	TargetID   string             `json:"target_id,omitempty"`
+	LastAttack time.Time          `json:"-"`
+	ThreatList map[string]float64 `json:"-"` // PlayerID -> threat value
+	Weapon     *Weapon            `json:"weapon,omitempty"`
+	Strength   int                `json:"strength"`
+	Agility    int                `json:"agility"`
+	Intellect  int                `json:"intellect"`
+	Stamina    int                `json:"stamina"`
 }

@@ -3,6 +3,7 @@ package networking
 import (
 	"encoding/json"
 	"log"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -37,6 +38,9 @@ func NewGameServer() *GameServer {
 
 	// Start the broadcast goroutine
 	go server.handleBroadcast()
+
+	// Start the enemy AI goroutine
+	go server.handleEnemyAI()
 
 	return server
 }
@@ -214,10 +218,7 @@ func (s *GameServer) handleMessage(player *types.Player, msg types.Message) {
 			return
 		}
 
-		log.Printf("DEBUG: Parsed action - Action: '%s', Target: '%s'", actionData.Action, actionData.Target)
-
 		if actionData.Action == "attack" && actionData.Target != "" {
-			log.Printf("DEBUG: Calling handleCombat for player %s attacking %s", player.ID, actionData.Target)
 			s.handleCombat(player, actionData.Target)
 		} else {
 			// Handle other actions or broadcast generic actions
@@ -265,14 +266,23 @@ func (s *GameServer) spawnInitialEnemies() {
 	for i := 0; i < 3; i++ {
 		enemyID := uuid.New().String()
 		enemy := &types.Enemy{
-			ID:        enemyID,
-			Name:      "Enemy " + enemyID[:8],
-			X:         200 + float64(i*150), // Spread enemies across the map
-			Y:         200 + float64(i*50),
-			EnemyType: "basic",
-			Health:    50,
-			MaxHealth: 50,
-			Target:    0, // No target initially
+			ID:         enemyID,
+			Name:       "Enemy " + enemyID[:8],
+			X:          200 + float64(i*150), // Spread enemies across the map
+			Y:          200 + float64(i*50),
+			EnemyType:  "basic",
+			Health:     50,
+			MaxHealth:  50,
+			TargetID:   "", // No target initially
+			ThreatList: make(map[string]float64),
+			Weapon: &types.Weapon{
+				ID:         uuid.New().String(),
+				Name:       "Claws",
+				Damage:     3,
+				Range:      1,
+				WeaponType: "melee",
+				Delay:      2 * time.Second,
+			},
 		}
 
 		s.enemies[enemyID] = enemy
@@ -315,6 +325,12 @@ func (s *GameServer) handleCombat(attacker *types.Player, targetEnemyID string) 
 	log.Printf("Player %s attacked %s for %d damage (HP: %d/%d)",
 		attacker.Name, enemy.Name, damage, enemy.Health, enemy.MaxHealth)
 
+	// Add threat based on damage dealt
+	enemy.ThreatList[attacker.ID] += float64(damage)
+	
+	// Update target based on highest threat
+	s.updateEnemyTarget(enemy)
+
 	if enemy.Health <= 0 {
 		// Enemy is dead - remove from game
 		delete(s.enemies, targetEnemyID)
@@ -335,6 +351,177 @@ func (s *GameServer) handleCombat(attacker *types.Player, targetEnemyID string) 
 		s.broadcast <- types.Message{
 			Type: types.MsgEnemyUpdate,
 			Data: s.marshal(enemy),
+		}
+	}
+}
+
+// updateEnemyTarget selects the player with highest threat as the new target
+func (s *GameServer) updateEnemyTarget(enemy *types.Enemy) {
+	var highestThreat float64
+	var newTargetID string
+	
+	// Find player with highest threat that still exists
+	for playerID, threat := range enemy.ThreatList {
+		if _, exists := s.players[playerID]; exists && threat > highestThreat {
+			highestThreat = threat
+			newTargetID = playerID
+		}
+	}
+	
+	// Update target if it changed
+	if newTargetID != enemy.TargetID {
+		oldTarget := enemy.TargetID
+		enemy.TargetID = newTargetID
+		
+		if oldTarget != "" && newTargetID != "" {
+			log.Printf("Enemy %s switched target from %s to %s (threat: %.1f)", 
+				enemy.Name, oldTarget[:8], newTargetID[:8], highestThreat)
+		} else if newTargetID != "" {
+			log.Printf("Enemy %s now targeting %s (threat: %.1f)", 
+				enemy.Name, newTargetID[:8], highestThreat)
+		}
+	}
+}
+
+// handleEnemyAI manages AI behavior for all enemies
+func (s *GameServer) handleEnemyAI() {
+	ticker := time.NewTicker(100 * time.Millisecond) // Update AI 10 times per second
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.mutex.Lock()
+		
+		// Process each enemy
+		for _, enemy := range s.enemies {
+			s.processEnemyAI(enemy)
+		}
+		
+		s.mutex.Unlock()
+	}
+}
+
+// processEnemyAI handles AI logic for a single enemy
+func (s *GameServer) processEnemyAI(enemy *types.Enemy) {
+	// Clean up threat list - remove disconnected players
+	for playerID := range enemy.ThreatList {
+		if _, exists := s.players[playerID]; !exists {
+			delete(enemy.ThreatList, playerID)
+		}
+	}
+	
+	// Add threat for all players within range
+	s.addRangeThreat(enemy)
+	
+	// If enemy has no target, look for nearby players or highest threat
+	if enemy.TargetID == "" {
+		s.findNearbyTarget(enemy)
+	} else {
+		// Check if target still exists
+		target, exists := s.players[enemy.TargetID]
+		if !exists {
+			enemy.TargetID = ""
+			s.updateEnemyTarget(enemy) // Try to find new target from threat list
+			return
+		}
+
+		// Calculate distance to target
+		dx := target.X - enemy.X
+		dy := target.Y - enemy.Y
+		distance := math.Sqrt(dx*dx + dy*dy)
+
+		// Get weapon range
+		weaponRange := 30.0 // Default range
+		if enemy.Weapon != nil {
+			weaponRange = float64(enemy.Weapon.Range * 25) // Scale range like client
+		}
+
+		if distance > weaponRange {
+			// Move toward target
+			s.moveEnemyTowardTarget(enemy, target, distance, dx, dy)
+		} else {
+			// In range - attack if enough time has passed
+			s.attemptEnemyAttack(enemy, target)
+		}
+	}
+}
+
+// addRangeThreat adds threat for players within range
+func (s *GameServer) addRangeThreat(enemy *types.Enemy) {
+	aggroRange := 100.0 // Aggro range in pixels
+	rangeThreat := 0.1   // Small threat per tick for being in range
+	
+	for _, player := range s.players {
+		dx := player.X - enemy.X
+		dy := player.Y - enemy.Y
+		distance := math.Sqrt(dx*dx + dy*dy)
+		
+		if distance <= aggroRange {
+			// Add small threat for being in range
+			enemy.ThreatList[player.ID] += rangeThreat
+			
+			// Update target if this creates a new highest threat
+			s.updateEnemyTarget(enemy)
+		}
+	}
+}
+
+// findNearbyTarget looks for players within aggro range
+func (s *GameServer) findNearbyTarget(enemy *types.Enemy) {
+	// First check if we have anyone on threat list from range threat
+	s.updateEnemyTarget(enemy)
+}
+
+// moveEnemyTowardTarget moves enemy toward its target
+func (s *GameServer) moveEnemyTowardTarget(enemy *types.Enemy, target *types.Player, distance, dx, dy float64) {
+	moveSpeed := 2.0 // Enemy move speed
+	
+	if distance > 0 {
+		// Normalize direction and move
+		enemy.X += (dx / distance) * moveSpeed
+		enemy.Y += (dy / distance) * moveSpeed
+		
+		// Broadcast enemy position update
+		s.broadcast <- types.Message{
+			Type: types.MsgEnemyUpdate,
+			Data: s.marshal(enemy),
+		}
+	}
+}
+
+// attemptEnemyAttack handles enemy attacks on players
+func (s *GameServer) attemptEnemyAttack(enemy *types.Enemy, target *types.Player) {
+	weaponDelay := 2 * time.Second // Default attack speed
+	if enemy.Weapon != nil {
+		weaponDelay = enemy.Weapon.Delay
+	}
+	
+	if time.Since(enemy.LastAttack) > weaponDelay {
+		// Calculate damage
+		damage := 2 // Default damage
+		if enemy.Weapon != nil {
+			damage = enemy.Weapon.Damage
+		}
+		
+		// Apply damage to player
+		target.Health -= damage
+		enemy.LastAttack = time.Now()
+		
+		log.Printf("Enemy %s attacked player %s for %d damage (HP: %d/%d)",
+			enemy.Name, target.Name, damage, target.Health, target.MaxHealth)
+		
+		// Broadcast player health update
+		s.broadcast <- types.Message{
+			Type:     types.MsgPlayerUpdate,
+			PlayerID: target.ID,
+			Data:     s.marshal(target),
+		}
+		
+		// If player dies, clear enemy target and threat
+		if target.Health <= 0 {
+			delete(enemy.ThreatList, target.ID)
+			enemy.TargetID = ""
+			s.updateEnemyTarget(enemy) // Try to find new target
+			log.Printf("Player %s has been defeated by %s", target.Name, enemy.Name)
 		}
 	}
 }
