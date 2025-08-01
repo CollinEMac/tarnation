@@ -1,15 +1,20 @@
 package game
 
 import (
+	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
+	"image"
 	"image/color"
+	_ "image/png"
 	"log"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/CollinEMac/tarnation/internal/types"
+	"github.com/CollinEMac/tarnation/internal/assets"
 	"github.com/gorilla/websocket"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
@@ -39,11 +44,14 @@ type GameClient struct {
 	cameraY          float64   // Camera position Y
 	screenWidth      int       // Screen dimensions
 	screenHeight     int
+	
+	// Sprites
+	warriorSprite    *ebiten.Image
 }
 
 // NewGameClient creates a new game client instance
 func NewGameClient() *GameClient {
-	return &GameClient{
+	client := &GameClient{
 		players:      make(map[string]*types.Player),
 		enemies:      make(map[string]*types.Enemy),
 		moveThrottle: 16 * time.Millisecond, // Limit movement updates to ~60/sec to match render loop
@@ -54,6 +62,21 @@ func NewGameClient() *GameClient {
 		cameraX:      0,
 		cameraY:      0,
 	}
+	
+	// Load warrior sprite
+	client.loadWarriorSprite()
+	
+	return client
+}
+
+// loadWarriorSprite loads the warrior PNG sprite
+func (g *GameClient) loadWarriorSprite() {
+	img, _, err := image.Decode(bytes.NewReader(assets.WarriorPNG))
+	if err != nil {
+		log.Printf("Failed to load warrior sprite: %v", err)
+		return
+	}
+	g.warriorSprite = ebiten.NewImageFromImage(img)
 }
 
 // ConnectToServer establishes WebSocket connection to game server
@@ -584,14 +607,26 @@ func (g *GameClient) drawPlayer(screen *ebiten.Image, player *types.Player) {
 	if screenX >= -20 && screenX <= float64(g.screenWidth)+20 &&
 	   screenY >= -20 && screenY <= float64(g.screenHeight)+20 {
 		
-		// Simple colored rectangle for now
-		playerColor := color.RGBA{0x80, 0x80, 0xff, 0xff} // Blue for other players
-		if player.ID == g.localPlayerID {
-			playerColor = color.RGBA{0xff, 0x80, 0x80, 0xff} // Red for local player
+		// Draw warrior sprite if available, otherwise fallback to rectangle
+		if g.warriorSprite != nil {
+			op := &ebiten.DrawImageOptions{}
+			// Center the sprite (warrior sprite is 32x32, so offset by 16,16)
+			op.GeoM.Translate(screenX-16, screenY-16)
+			
+			// Tint the sprite for local player vs other players
+			if player.ID == g.localPlayerID {
+				op.ColorM.Scale(1.2, 0.8, 0.8, 1) // Slight red tint for local player
+			}
+			
+			screen.DrawImage(g.warriorSprite, op)
+		} else {
+			// Fallback to colored rectangle
+			playerColor := color.RGBA{0x80, 0x80, 0xff, 0xff} // Blue for other players
+			if player.ID == g.localPlayerID {
+				playerColor = color.RGBA{0xff, 0x80, 0x80, 0xff} // Red for local player
+			}
+			ebitenutil.DrawRect(screen, screenX-10, screenY-10, 20, 20, playerColor)
 		}
-
-		// Draw player as a 20x20 rectangle
-		ebitenutil.DrawRect(screen, screenX-10, screenY-10, 20, 20, playerColor)
 
 		// Draw player name
 		ebitenutil.DebugPrintAt(screen, player.Name, int(screenX-20), int(screenY-25))
