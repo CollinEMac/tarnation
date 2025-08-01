@@ -21,6 +21,7 @@ type GameClient struct {
 	conn             *websocket.Conn
 	players          map[string]*types.Player
 	enemies          map[string]*types.Enemy
+	room             types.Room
 	localPlayerID    string
 	targetEnemyID    string    // ID of currently targeted enemy
 	selectedEntityID string    // ID of currently selected entity (for nameplate)
@@ -32,6 +33,12 @@ type GameClient struct {
 	moveThrottle     time.Duration
 	messages         []string // For displaying debug info
 	shouldClose      bool     // Flag to indicate clean shutdown
+	
+	// Camera system
+	cameraX          float64   // Camera position X
+	cameraY          float64   // Camera position Y
+	screenWidth      int       // Screen dimensions
+	screenHeight     int
 }
 
 // NewGameClient creates a new game client instance
@@ -42,6 +49,10 @@ func NewGameClient() *GameClient {
 		moveThrottle: 16 * time.Millisecond, // Limit movement updates to ~60/sec to match render loop
 		messages:     make([]string, 0),
 		shouldClose:  false,
+		screenWidth:  800,
+		screenHeight: 600,
+		cameraX:      0,
+		cameraY:      0,
 	}
 }
 
@@ -223,6 +234,17 @@ func (g *GameClient) processMessage(msg types.Message) {
 			g.mutex.Unlock()
 		}
 
+	case types.MsgRoomData:
+		var room types.Room
+		if err := json.Unmarshal(msg.Data, &room); err != nil {
+			log.Printf("Error unmarshaling room data: %v", err)
+			return
+		}
+
+		g.mutex.Lock()
+		g.room = room
+		g.mutex.Unlock()
+
 	case types.MsgError:
 		g.addMessage(fmt.Sprintf("Server error: %s", string(msg.Data)))
 
@@ -263,6 +285,10 @@ func (g *GameClient) Update() error {
 
 	// Handle player input
 	g.handleInput()
+	
+	// Update camera to follow local player
+	g.updateCamera()
+	
 	return nil
 }
 
@@ -323,12 +349,15 @@ func (g *GameClient) handleInput() {
 	// Handle player selection (left click)
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		mouseX, mouseY := ebiten.CursorPosition()
+		// Convert screen coordinates to world coordinates
+		worldX := float64(mouseX) + g.cameraX
+		worldY := float64(mouseY) + g.cameraY
 		
 		// Check for player first (players have priority over enemies for selection)
-		if playerID := g.getPlayerAt(float64(mouseX), float64(mouseY)); playerID != "" {
+		if playerID := g.getPlayerAt(worldX, worldY); playerID != "" {
 			g.selectedEntityID = playerID
 			g.selectedEntityType = "player"
-		} else if enemyID := g.getEnemyAt(float64(mouseX), float64(mouseY)); enemyID != "" {
+		} else if enemyID := g.getEnemyAt(worldX, worldY); enemyID != "" {
 			g.selectedEntityID = enemyID
 			g.selectedEntityType = "enemy"
 		} else {
@@ -341,7 +370,11 @@ func (g *GameClient) handleInput() {
 	// Handle player targeting (right click)
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
 		mouseX, mouseY := ebiten.CursorPosition()
-		if enemyID := g.getEnemyAt(float64(mouseX), float64(mouseY)); enemyID != "" {
+		// Convert screen coordinates to world coordinates
+		worldX := float64(mouseX) + g.cameraX
+		worldY := float64(mouseY) + g.cameraY
+		
+		if enemyID := g.getEnemyAt(worldX, worldY); enemyID != "" {
 			g.targetEnemyID = enemyID
 			// Also select the enemy for nameplate display
 			g.selectedEntityID = enemyID
@@ -403,30 +436,83 @@ func (g *GameClient) handleInput() {
 
 	// Send movement update if player moved
 	if moved {
-		// Update local position immediately for responsive feel
-		g.mutex.Lock()
-		localPlayer.X = newX
-		localPlayer.Y = newY
-		g.mutex.Unlock()
+		// Use sliding collision detection
+		g.mutex.RLock()
+		walls := g.room.Walls
+		g.mutex.RUnlock()
+		
+		validX, validY := g.checkWallCollisionWithSliding(localPlayer.X, localPlayer.Y, newX, newY, walls)
+		
+		// Only update if position actually changed
+		if validX != localPlayer.X || validY != localPlayer.Y {
+			// Update local position immediately for responsive feel
+			g.mutex.Lock()
+			localPlayer.X = validX
+			localPlayer.Y = validY
+			g.mutex.Unlock()
 
-		// Send update to server
-		moveData := map[string]float64{
-			"x": newX,
-			"y": newY,
+			// Send update to server
+			moveData := map[string]float64{
+				"x": validX,
+				"y": validY,
+			}
+
+			if err := g.sendMessage(types.MsgPlayerMove, moveData); err != nil {
+				log.Printf("Error sending move: %v", err)
+			}
+
+			g.lastMoveTime = time.Now()
 		}
-
-		if err := g.sendMessage(types.MsgPlayerMove, moveData); err != nil {
-			log.Printf("Error sending move: %v", err)
-		}
-
-		g.lastMoveTime = time.Now()
 	}
+}
+
+// updateCamera updates the camera position to follow the local player
+func (g *GameClient) updateCamera() {
+	g.mutex.RLock()
+	defer g.mutex.RUnlock()
+	
+	// Get local player
+	localPlayer, exists := g.players[g.localPlayerID]
+	if !exists {
+		return
+	}
+	
+	// Camera deadzone (like classic Zelda - player can move within this area without camera moving)
+	deadzoneWidth := float64(g.screenWidth) / 4   // 200 pixels
+	deadzoneHeight := float64(g.screenHeight) / 4 // 150 pixels
+	
+	// Calculate player position relative to current camera
+	playerScreenX := localPlayer.X - g.cameraX
+	playerScreenY := localPlayer.Y - g.cameraY
+	
+	// Calculate deadzone boundaries
+	deadzoneLeft := float64(g.screenWidth)/2 - deadzoneWidth/2
+	deadzoneRight := float64(g.screenWidth)/2 + deadzoneWidth/2
+	deadzoneTop := float64(g.screenHeight)/2 - deadzoneHeight/2
+	deadzoneBottom := float64(g.screenHeight)/2 + deadzoneHeight/2
+	
+	// Move camera if player is outside deadzone
+	if playerScreenX < deadzoneLeft {
+		g.cameraX = localPlayer.X - deadzoneLeft
+	} else if playerScreenX > deadzoneRight {
+		g.cameraX = localPlayer.X - deadzoneRight
+	}
+	
+	if playerScreenY < deadzoneTop {
+		g.cameraY = localPlayer.Y - deadzoneTop
+	} else if playerScreenY > deadzoneBottom {
+		g.cameraY = localPlayer.Y - deadzoneBottom
+	}
+	
 }
 
 // Draw implements ebiten.Game interface
 func (g *GameClient) Draw(screen *ebiten.Image) {
 	// Clear screen with dark background
 	screen.Fill(color.RGBA{0x20, 0x20, 0x20, 0xff})
+
+	// Draw walls first (as background)
+	g.drawWalls(screen)
 
 	// Copy enemy data to avoid holding locks during rendering
 	g.mutex.RLock()
@@ -477,51 +563,82 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 	} else if localPlayerID == "" {
 		ebitenutil.DebugPrintAt(screen, "No local player ID set", 10, 70)
 	} else {
-		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Local player: %s", localPlayerID[:8]), 10, 70)
+		// ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Local player: %s", localPlayerID[:8]), 10, 70)
+		// ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Camera: (%.0f, %.0f)", g.cameraX, g.cameraY), 10, 85)
 	}
 }
 
 // drawPlayer renders a player on screen
 func (g *GameClient) drawPlayer(screen *ebiten.Image, player *types.Player) {
-	// Simple colored rectangle for now
-	playerColor := color.RGBA{0x80, 0x80, 0xff, 0xff} // Blue for other players
-	if player.ID == g.localPlayerID {
-		playerColor = color.RGBA{0xff, 0x80, 0x80, 0xff} // Red for local player
+	// Get camera position
+	g.mutex.RLock()
+	cameraX := g.cameraX
+	cameraY := g.cameraY
+	g.mutex.RUnlock()
+	
+	// Calculate screen position
+	screenX := player.X - cameraX
+	screenY := player.Y - cameraY
+	
+	// Only draw if player is visible on screen
+	if screenX >= -20 && screenX <= float64(g.screenWidth)+20 &&
+	   screenY >= -20 && screenY <= float64(g.screenHeight)+20 {
+		
+		// Simple colored rectangle for now
+		playerColor := color.RGBA{0x80, 0x80, 0xff, 0xff} // Blue for other players
+		if player.ID == g.localPlayerID {
+			playerColor = color.RGBA{0xff, 0x80, 0x80, 0xff} // Red for local player
+		}
+
+		// Draw player as a 20x20 rectangle
+		ebitenutil.DrawRect(screen, screenX-10, screenY-10, 20, 20, playerColor)
+
+		// Draw player name
+		ebitenutil.DebugPrintAt(screen, player.Name, int(screenX-20), int(screenY-25))
+
+		// Draw health bar
+		barWidth := 30.0
+		barHeight := 4.0
+		healthPercent := float64(player.Health) / float64(player.MaxHealth)
+
+		// Health (green)
+		ebitenutil.DrawRect(screen, screenX-barWidth/2, screenY+15, barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
 	}
-
-	// Draw player as a 20x20 rectangle
-	ebitenutil.DrawRect(screen, player.X-10, player.Y-10, 20, 20, playerColor)
-
-	// Draw player name
-	ebitenutil.DebugPrintAt(screen, player.Name, int(player.X-20), int(player.Y-25))
-
-	// Draw health bar
-	barWidth := 30.0
-	barHeight := 4.0
-	healthPercent := float64(player.Health) / float64(player.MaxHealth)
-
-	// Health (green)
-	ebitenutil.DrawRect(screen, player.X-barWidth/2, player.Y+15, barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
 }
 
 // drawEnemy renders a single enemy on the screen
 func (g *GameClient) drawEnemy(screen *ebiten.Image, enemy *types.Enemy) {
-	// Simple colored rectangle for now
-	enemyColor := color.RGBA{0xff, 0xff, 0xff, 0xff} // white for now
+	// Get camera position
+	g.mutex.RLock()
+	cameraX := g.cameraX
+	cameraY := g.cameraY
+	g.mutex.RUnlock()
+	
+	// Calculate screen position
+	screenX := enemy.X - cameraX
+	screenY := enemy.Y - cameraY
+	
+	// Only draw if enemy is visible on screen
+	if screenX >= -20 && screenX <= float64(g.screenWidth)+20 &&
+	   screenY >= -20 && screenY <= float64(g.screenHeight)+20 {
+		
+		// Simple colored rectangle for now
+		enemyColor := color.RGBA{0xff, 0xff, 0xff, 0xff} // white for now
 
-	// Draw enemy as a 20x20 rectangle
-	ebitenutil.DrawRect(screen, enemy.X-10, enemy.Y-10, 20, 20, enemyColor)
+		// Draw enemy as a 20x20 rectangle
+		ebitenutil.DrawRect(screen, screenX-10, screenY-10, 20, 20, enemyColor)
 
-	// Draw enemy name
-	ebitenutil.DebugPrintAt(screen, enemy.Name, int(enemy.X-20), int(enemy.Y-25))
+		// Draw enemy name
+		ebitenutil.DebugPrintAt(screen, enemy.Name, int(screenX-20), int(screenY-25))
 
-	// Draw health bar
-	barWidth := 30.0
-	barHeight := 4.0
-	healthPercent := float64(enemy.Health) / float64(enemy.MaxHealth)
+		// Draw health bar
+		barWidth := 30.0
+		barHeight := 4.0
+		healthPercent := float64(enemy.Health) / float64(enemy.MaxHealth)
 
-	// Health (green)
-	ebitenutil.DrawRect(screen, enemy.X-barWidth/2, enemy.Y+15, barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
+		// Health (green)
+		ebitenutil.DrawRect(screen, screenX-barWidth/2, screenY+15, barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
+	}
 }
 
 // drawUI renders the game UI
@@ -619,6 +736,65 @@ func (g *GameClient) drawNameplate(screen *ebiten.Image) {
 		ebitenutil.DrawRect(screen, float64(nameplateX+5), float64(nameplateY+62), barWidth, barHeight, color.RGBA{0x00, 0x00, 0x80, 0xff})
 		// Mana bar foreground (blue)
 		ebitenutil.DrawRect(screen, float64(nameplateX+5), float64(nameplateY+62), barWidth*manaPercent, barHeight, color.RGBA{0x00, 0x80, 0xff, 0xff})
+	}
+}
+
+// checkWallCollision checks if a position would collide with any walls
+func (g *GameClient) checkWallCollision(x, y float64, walls []types.Wall) bool {
+	entitySize := 10.0 // Half the size of player/enemy (20x20 rectangle)
+	
+	for _, wall := range walls {
+		// Check if entity bounds intersect with wall bounds
+		if x-entitySize < wall.X+wall.Width &&
+			x+entitySize > wall.X &&
+			y-entitySize < wall.Y+wall.Height &&
+			y+entitySize > wall.Y {
+			return true
+		}
+	}
+	return false
+}
+
+// checkWallCollisionWithSliding checks collision and returns valid position allowing sliding
+func (g *GameClient) checkWallCollisionWithSliding(oldX, oldY, newX, newY float64, walls []types.Wall) (float64, float64) {
+	// If new position doesn't collide, allow the move
+	if !g.checkWallCollision(newX, newY, walls) {
+		return newX, newY
+	}
+	
+	// Try horizontal movement only (keep old Y)
+	if !g.checkWallCollision(newX, oldY, walls) {
+		return newX, oldY
+	}
+	
+	// Try vertical movement only (keep old X)
+	if !g.checkWallCollision(oldX, newY, walls) {
+		return oldX, newY
+	}
+	
+	// Can't move in any direction, stay at old position
+	return oldX, oldY
+}
+
+// drawWalls renders the room walls
+func (g *GameClient) drawWalls(screen *ebiten.Image) {
+	g.mutex.RLock()
+	walls := g.room.Walls
+	cameraX := g.cameraX
+	cameraY := g.cameraY
+	g.mutex.RUnlock()
+
+	// Draw each wall as a gray rectangle, offset by camera position
+	wallColor := color.RGBA{0x80, 0x80, 0x80, 0xff}
+	for _, wall := range walls {
+		screenX := wall.X - cameraX
+		screenY := wall.Y - cameraY
+		
+		// Only draw walls that are visible on screen
+		if screenX+wall.Width >= 0 && screenX <= float64(g.screenWidth) &&
+		   screenY+wall.Height >= 0 && screenY <= float64(g.screenHeight) {
+			ebitenutil.DrawRect(screen, screenX, screenY, wall.Width, wall.Height, wallColor)
+		}
 	}
 }
 

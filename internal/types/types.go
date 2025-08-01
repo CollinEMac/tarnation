@@ -19,6 +19,7 @@ const (
 	MsgGameState    MessageType = "game_state"
 	MsgEnemySpawn   MessageType = "enemy_spawn"
 	MsgEnemyUpdate  MessageType = "enemy_update"
+	MsgRoomData     MessageType = "room_data"
 	MsgError        MessageType = "error"
 )
 
@@ -79,4 +80,17 @@ type Enemy struct {
 	Agility    int                `json:"agility"`
 	Intellect  int                `json:"intellect"`
 	Stamina    int                `json:"stamina"`
+}
+
+// Wall represents a wall or boundary in the dungeon
+type Wall struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+// Room represents a dungeon room with walls
+type Room struct {
+	Walls []Wall `json:"walls"`
 }

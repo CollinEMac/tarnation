@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/CollinEMac/tarnation/internal/game"
 	"github.com/CollinEMac/tarnation/internal/types"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -17,6 +18,7 @@ import (
 type GameServer struct {
 	players   map[string]*types.Player
 	enemies   map[string]*types.Enemy
+	room      types.Room
 	mutex     sync.RWMutex
 	upgrader  websocket.Upgrader
 	broadcast chan types.Message
@@ -27,6 +29,7 @@ func NewGameServer() *GameServer {
 	server := &GameServer{
 		players:   make(map[string]*types.Player),
 		enemies:   make(map[string]*types.Enemy),
+		room:      game.CreateDungeonRoom(),
 		broadcast: make(chan types.Message, 256),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
@@ -59,7 +62,7 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	player := &types.Player{
 		ID:        playerID,
 		Name:      "Player " + playerID[:8], // Default name
-		X:         400,                      // Default spawn position
+		X:         400,                      // Spawn in center of larger room
 		Y:         300,
 		Class:     "warrior", // Default class
 		Health:    100,
@@ -133,6 +136,16 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	
+	// Send room data to new player
+	roomMsg := types.Message{
+		Type: types.MsgRoomData,
+		Data: s.marshal(s.room),
+	}
+	if err := conn.WriteJSON(roomMsg); err != nil {
+		log.Printf("Error sending room data to new player: %v", err)
+	}
+	
 	s.mutex.RUnlock()
 
 	// Broadcast player join to all other players
@@ -194,10 +207,11 @@ func (s *GameServer) handleMessage(player *types.Player, msg types.Message) {
 			return
 		}
 
-		// Update player position (add validation here)
+		// Update player position with sliding collision detection
 		s.mutex.Lock()
-		player.X = moveData.X
-		player.Y = moveData.Y
+		validX, validY := game.CheckWallCollisionWithSliding(player.X, player.Y, moveData.X, moveData.Y, s.room.Walls)
+		player.X = validX
+		player.Y = validY
 		s.mutex.Unlock()
 
 		// Broadcast position update
@@ -268,8 +282,8 @@ func (s *GameServer) spawnInitialEnemies() {
 		enemy := &types.Enemy{
 			ID:         enemyID,
 			Name:       "Enemy " + enemyID[:8],
-			X:          200 + float64(i*150), // Spread enemies across the map
-			Y:          200 + float64(i*50),
+			X:          200 + float64(i*200), // Spawn enemies across larger room
+			Y:          200 + float64(i*100),
 			EnemyType:  "basic",
 			Health:     50,
 			MaxHealth:  50,
@@ -476,14 +490,23 @@ func (s *GameServer) moveEnemyTowardTarget(enemy *types.Enemy, target *types.Pla
 	moveSpeed := 2.0 // Enemy move speed
 	
 	if distance > 0 {
-		// Normalize direction and move
-		enemy.X += (dx / distance) * moveSpeed
-		enemy.Y += (dy / distance) * moveSpeed
+		// Calculate new position
+		newX := enemy.X + (dx/distance)*moveSpeed
+		newY := enemy.Y + (dy/distance)*moveSpeed
 		
-		// Broadcast enemy position update
-		s.broadcast <- types.Message{
-			Type: types.MsgEnemyUpdate,
-			Data: s.marshal(enemy),
+		// Use sliding collision detection
+		validX, validY := game.CheckWallCollisionWithSliding(enemy.X, enemy.Y, newX, newY, s.room.Walls)
+		
+		// Only update if position actually changed
+		if validX != enemy.X || validY != enemy.Y {
+			enemy.X = validX
+			enemy.Y = validY
+			
+			// Broadcast enemy position update
+			s.broadcast <- types.Message{
+				Type: types.MsgEnemyUpdate,
+				Data: s.marshal(enemy),
+			}
 		}
 	}
 }
