@@ -19,6 +19,8 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
+	"golang.org/x/image/font/gofont/goregular"
 )
 
 // GameClient handles the client-side game logic
@@ -49,6 +51,9 @@ type GameClient struct {
 	warriorSprite       *ebiten.Image
 	dirtFloorSprite     *ebiten.Image
 	criticalStrikeSprite *ebiten.Image
+	
+	// Font
+	fontFace            text.Face
 }
 
 // NewGameClient creates a new game client instance
@@ -69,6 +74,9 @@ func NewGameClient() *GameClient {
 	client.loadWarriorSprite()
 	client.loadDirtFloorSprite()
 	client.loadCriticalStrikeSprite()
+	
+	// Load font
+	client.loadFont()
 	
 	return client
 }
@@ -101,6 +109,19 @@ func (g *GameClient) loadCriticalStrikeSprite() {
 		return
 	}
 	g.criticalStrikeSprite = ebiten.NewImageFromImage(img)
+}
+
+// loadFont sets up the default font face
+func (g *GameClient) loadFont() {
+	source, err := text.NewGoTextFaceSource(bytes.NewReader(goregular.TTF))
+	if err != nil {
+		log.Printf("Failed to load font: %v", err)
+		return
+	}
+	g.fontFace = &text.GoTextFace{
+		Source: source,
+		Size:   12,
+	}
 }
 
 // ConnectToServer establishes WebSocket connection to game server
@@ -662,7 +683,9 @@ func (g *GameClient) drawPlayer(screen *ebiten.Image, player *types.Player) {
 		}
 
 		// Draw player name
-		ebitenutil.DebugPrintAt(screen, player.Name, int(screenX-20), int(screenY-25))
+		opts := &text.DrawOptions{}
+		opts.GeoM.Translate(screenX-20, screenY-25)
+		text.Draw(screen, player.Name, g.fontFace, opts)
 
 		// Draw health bar
 		barWidth := 30.0
@@ -697,7 +720,9 @@ func (g *GameClient) drawEnemy(screen *ebiten.Image, enemy *types.Enemy) {
 		ebitenutil.DrawRect(screen, screenX-10, screenY-10, 20, 20, enemyColor)
 
 		// Draw enemy name
-		ebitenutil.DebugPrintAt(screen, enemy.Name, int(screenX-20), int(screenY-25))
+		opts := &text.DrawOptions{}
+		opts.GeoM.Translate(screenX-20, screenY-25)
+		text.Draw(screen, enemy.Name, g.fontFace, opts)
 
 		// Draw health bar
 		barWidth := 30.0
@@ -719,7 +744,9 @@ func (g *GameClient) drawUI(screen *ebiten.Image) {
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("Status: %s | Players: %d", status, len(g.players)))
 
 	// Controls
-	ebitenutil.DebugPrintAt(screen, "Controls: WASD/Arrows to move, Space for action, Left click to select", 10, 30)
+	opts := &text.DrawOptions{}
+	opts.GeoM.Translate(10, 30)
+	text.Draw(screen, "Controls: WASD/Arrows to move, Space for action, Left click to select", g.fontFace, opts)
 
 	// Draw nameplate for selected entity
 	g.drawNameplate(screen)
@@ -771,7 +798,9 @@ func (g *GameClient) drawPlayerResources(screen *ebiten.Image) {
 	ebitenutil.DrawRect(screen, barX+barWidth, barY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Right
 	
 	// Health text
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Health: %d/%d", localPlayer.Health, localPlayer.MaxHealth), int(barX), int(barY-15))
+	opts := &text.DrawOptions{}
+	opts.GeoM.Translate(barX, barY-15)
+	text.Draw(screen, fmt.Sprintf("Health: %d/%d", localPlayer.Health, localPlayer.MaxHealth), g.fontFace, opts)
 	
 	// Draw resource bar (rage for warriors, mana for other classes)  
 	resourceY := barY + barHeight + barSpacing
@@ -801,7 +830,9 @@ func (g *GameClient) drawPlayerResources(screen *ebiten.Image) {
 	ebitenutil.DrawRect(screen, barX+barWidth, resourceY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Right
 	
 	// Resource text
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s: %d/%d", resourceLabel, localPlayer.Mana, localPlayer.MaxMana), int(barX), int(resourceY-15))
+	resourceOpts := &text.DrawOptions{}
+	resourceOpts.GeoM.Translate(barX, resourceY-15)
+	text.Draw(screen, fmt.Sprintf("%s: %d/%d", resourceLabel, localPlayer.Mana, localPlayer.MaxMana), g.fontFace, resourceOpts)
 }
 
 // drawActionBar renders the ability action bar at the bottom of the screen
@@ -871,7 +902,9 @@ func (g *GameClient) drawActionBar(screen *ebiten.Image) {
 			screen.DrawImage(g.criticalStrikeSprite, op)
 		} else {
 			// Draw slot number for empty slots
-			ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", i+1), slotX+slotSize/2-3, slotY+slotSize/2-4)
+			opts := &text.DrawOptions{}
+			opts.GeoM.Translate(float64(slotX+slotSize/2-3), float64(slotY+slotSize/2-4))
+			text.Draw(screen, fmt.Sprintf("%d", i+1), g.fontFace, opts)
 		}
 	}
 }
@@ -947,9 +980,15 @@ func (g *GameClient) drawNameplate(screen *ebiten.Image) {
 	ebitenutil.DrawRect(screen, float64(nameplateX+nameplateWidth-2), float64(nameplateY), 2, float64(nameplateHeight), color.RGBA{0xff, 0xff, 0xff, 0xff})
 
 	// Draw entity information
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Name: %s", name), nameplateX+5, nameplateY+5)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Health: %d/%d", health, maxHealth), nameplateX+5, nameplateY+20)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Mana: %d/%d", mana, maxMana), nameplateX+5, nameplateY+35)
+	opts := &text.DrawOptions{}
+	opts.GeoM.Translate(float64(nameplateX+5), float64(nameplateY+5))
+	text.Draw(screen, fmt.Sprintf("Name: %s", name), g.fontFace, opts)
+	opts = &text.DrawOptions{}
+	opts.GeoM.Translate(float64(nameplateX+5), float64(nameplateY+20))
+	text.Draw(screen, fmt.Sprintf("Health: %d/%d", health, maxHealth), g.fontFace, opts)
+	opts = &text.DrawOptions{}
+	opts.GeoM.Translate(float64(nameplateX+5), float64(nameplateY+35))
+	text.Draw(screen, fmt.Sprintf("Mana: %d/%d", mana, maxMana), g.fontFace, opts)
 
 	// Draw health bar
 	barWidth := float64(nameplateWidth - 10)
