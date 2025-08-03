@@ -259,7 +259,11 @@ func (s *GameServer) handleBroadcast() {
 				continue
 			}
 
-			if err := player.Conn.WriteJSON(msg); err != nil {
+			player.ConnMutex.Lock()
+			err := player.Conn.WriteJSON(msg)
+			player.ConnMutex.Unlock()
+			
+			if err != nil {
 				log.Printf("Error broadcasting to player %s: %v", player.ID, err)
 				// Could implement reconnection logic here
 			}

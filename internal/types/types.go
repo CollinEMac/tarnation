@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -43,6 +44,7 @@ type Player struct {
 	Mana      int             `json:"mana"`
 	MaxMana   int             `json:"max_mana"`
 	Conn      *websocket.Conn `json:"-"` // Only used on server side
+	ConnMutex sync.Mutex      `json:"-"` // Protects WebSocket writes
 	Target    int             `json:"target"`
 	Weapon    *Weapon         `json:"weapon,omitempty"`
 	Strength  int             `json:"strength"`
