@@ -309,8 +309,8 @@ func (s *GameServer) spawnInitialEnemies() {
 		enemy := &types.Enemy{
 			ID:         enemyID,
 			Name:       "Enemy " + enemyID[:8],
-			X:          200 + float64(i*200), // Spawn enemies across larger room
-			Y:          200 + float64(i*100),
+			X:          200 + float64(i*300), // Spawn enemies across larger room
+			Y:          200 + float64(i*150),
 			EnemyType:  "basic",
 			Health:     50,
 			MaxHealth:  50,
