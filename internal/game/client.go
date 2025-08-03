@@ -741,14 +741,21 @@ func (g *GameClient) drawPlayerResources(screen *ebiten.Image) {
 		return
 	}
 	
-	// Resource bar dimensions
+	// Resource bar dimensions (original close spacing)
 	barWidth := 200.0
 	barHeight := 20.0
-	barSpacing := 25.0
+	barSpacing := 4.0 // Small gap like originally
 	
-	// Position above action bar, left side
+	// Center the bar group with action bar center
+	actionBarY := float64(g.screenHeight) - 56.0 - 10.0
+	actionBarCenterY := actionBarY + 28.0 // Center of action bar
+	
+	// Total height of both bars = 20 + 4 + 20 = 44px
+	totalBarsHeight := barHeight + barSpacing + barHeight
+	
+	// Start health bar so the center of both bars aligns with action bar center
 	barX := 20.0
-	barY := float64(g.screenHeight) - 150.0 // Above action bar
+	barY := actionBarCenterY - (totalBarsHeight / 2.0)
 	
 	// Draw health bar
 	healthPercent := float64(localPlayer.Health) / float64(localPlayer.MaxHealth)
@@ -766,8 +773,8 @@ func (g *GameClient) drawPlayerResources(screen *ebiten.Image) {
 	// Health text
 	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Health: %d/%d", localPlayer.Health, localPlayer.MaxHealth), int(barX), int(barY-15))
 	
-	// Draw resource bar (rage for warriors, mana for other classes)
-	resourceY := barY + barSpacing
+	// Draw resource bar (rage for warriors, mana for other classes)  
+	resourceY := barY + barHeight + barSpacing
 	resourcePercent := float64(localPlayer.Mana) / float64(localPlayer.MaxMana)
 	
 	var resourceLabel string
