@@ -46,8 +46,9 @@ type GameClient struct {
 	screenHeight     int
 	
 	// Sprites
-	warriorSprite    *ebiten.Image
-	dirtFloorSprite  *ebiten.Image
+	warriorSprite       *ebiten.Image
+	dirtFloorSprite     *ebiten.Image
+	criticalStrikeSprite *ebiten.Image
 }
 
 // NewGameClient creates a new game client instance
@@ -67,6 +68,7 @@ func NewGameClient() *GameClient {
 	// Load sprites
 	client.loadWarriorSprite()
 	client.loadDirtFloorSprite()
+	client.loadCriticalStrikeSprite()
 	
 	return client
 }
@@ -89,6 +91,16 @@ func (g *GameClient) loadDirtFloorSprite() {
 		return
 	}
 	g.dirtFloorSprite = ebiten.NewImageFromImage(img)
+}
+
+// loadCriticalStrikeSprite loads the critical strike PNG sprite
+func (g *GameClient) loadCriticalStrikeSprite() {
+	img, _, err := image.Decode(bytes.NewReader(assets.CriticalStrikePNG))
+	if err != nil {
+		log.Printf("Failed to load critical strike sprite: %v", err)
+		return
+	}
+	g.criticalStrikeSprite = ebiten.NewImageFromImage(img)
 }
 
 // ConnectToServer establishes WebSocket connection to game server
@@ -425,6 +437,17 @@ func (g *GameClient) handleInput() {
 		})
 	}
 
+	// Handle ability hotkeys
+	if inpututil.IsKeyJustPressed(ebiten.Key1) {
+		// Critical Strike ability (slot 1) - warrior only
+		if g.targetEnemyID != "" && g.isLocalPlayerWarrior() {
+			g.sendMessage(types.MsgPlayerAction, map[string]interface{}{
+				"action": "critical_strike",
+				"target": g.targetEnemyID,
+			})
+		}
+	}
+
 	// Handle auto-combat with targeted enemy
 	if g.targetEnemyID != "" {
 		g.mutex.RLock()
@@ -700,6 +723,163 @@ func (g *GameClient) drawUI(screen *ebiten.Image) {
 
 	// Draw nameplate for selected entity
 	g.drawNameplate(screen)
+	
+	// Draw player resources (health/rage)
+	g.drawPlayerResources(screen)
+	
+	// Draw action bar
+	g.drawActionBar(screen)
+}
+
+// drawPlayerResources renders the local player's health and rage bars
+func (g *GameClient) drawPlayerResources(screen *ebiten.Image) {
+	g.mutex.RLock()
+	localPlayer, exists := g.players[g.localPlayerID]
+	g.mutex.RUnlock()
+	
+	if !exists || localPlayer == nil {
+		return
+	}
+	
+	// Resource bar dimensions
+	barWidth := 200.0
+	barHeight := 20.0
+	barSpacing := 25.0
+	
+	// Position above action bar, left side
+	barX := 20.0
+	barY := float64(g.screenHeight) - 150.0 // Above action bar
+	
+	// Draw health bar
+	healthPercent := float64(localPlayer.Health) / float64(localPlayer.MaxHealth)
+	
+	// Health bar background (dark red)
+	ebitenutil.DrawRect(screen, barX, barY, barWidth, barHeight, color.RGBA{0x40, 0x00, 0x00, 0xFF})
+	// Health bar foreground (red)
+	ebitenutil.DrawRect(screen, barX, barY, barWidth*healthPercent, barHeight, color.RGBA{0xFF, 0x00, 0x00, 0xFF})
+	// Health bar border
+	ebitenutil.DrawRect(screen, barX-1, barY-1, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Top
+	ebitenutil.DrawRect(screen, barX-1, barY+barHeight, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Bottom
+	ebitenutil.DrawRect(screen, barX-1, barY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Left
+	ebitenutil.DrawRect(screen, barX+barWidth, barY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Right
+	
+	// Health text
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Health: %d/%d", localPlayer.Health, localPlayer.MaxHealth), int(barX), int(barY-15))
+	
+	// Draw resource bar (rage for warriors, mana for other classes)
+	resourceY := barY + barSpacing
+	resourcePercent := float64(localPlayer.Mana) / float64(localPlayer.MaxMana)
+	
+	var resourceLabel string
+	var resourceBgColor, resourceFgColor color.RGBA
+	
+	if localPlayer.Class == "warrior" {
+		resourceLabel = "Rage"
+		resourceBgColor = color.RGBA{0x40, 0x20, 0x00, 0xFF} // Dark orange
+		resourceFgColor = color.RGBA{0xFF, 0x80, 0x00, 0xFF} // Orange
+	} else {
+		resourceLabel = "Mana"
+		resourceBgColor = color.RGBA{0x00, 0x20, 0x40, 0xFF} // Dark blue
+		resourceFgColor = color.RGBA{0x00, 0x80, 0xFF, 0xFF} // Blue
+	}
+	
+	// Resource bar background
+	ebitenutil.DrawRect(screen, barX, resourceY, barWidth, barHeight, resourceBgColor)
+	// Resource bar foreground
+	ebitenutil.DrawRect(screen, barX, resourceY, barWidth*resourcePercent, barHeight, resourceFgColor)
+	// Resource bar border
+	ebitenutil.DrawRect(screen, barX-1, resourceY-1, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Top
+	ebitenutil.DrawRect(screen, barX-1, resourceY+barHeight, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Bottom
+	ebitenutil.DrawRect(screen, barX-1, resourceY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Left
+	ebitenutil.DrawRect(screen, barX+barWidth, resourceY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Right
+	
+	// Resource text
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%s: %d/%d", resourceLabel, localPlayer.Mana, localPlayer.MaxMana), int(barX), int(resourceY-15))
+}
+
+// drawActionBar renders the ability action bar at the bottom of the screen
+func (g *GameClient) drawActionBar(screen *ebiten.Image) {
+	// Action bar dimensions
+	slotCount := 8
+	slotSize := 40
+	slotSpacing := 4
+	barWidth := slotCount*slotSize + (slotCount-1)*slotSpacing + 16 // +16 for padding
+	barHeight := slotSize + 16 // +16 for padding
+	
+	// Position at bottom center of screen
+	barX := (g.screenWidth - barWidth) / 2
+	barY := g.screenHeight - barHeight - 10 // 10 pixels from bottom
+	
+	// Draw action bar background
+	barBgColor := color.RGBA{0x20, 0x20, 0x20, 0xE0} // Semi-transparent dark
+	barBorderColor := color.RGBA{0x60, 0x60, 0x60, 0xFF} // Gray border
+	
+	// Background
+	ebitenutil.DrawRect(screen, float64(barX), float64(barY), float64(barWidth), float64(barHeight), barBgColor)
+	
+	// Border
+	ebitenutil.DrawRect(screen, float64(barX), float64(barY), float64(barWidth), 2, barBorderColor) // Top
+	ebitenutil.DrawRect(screen, float64(barX), float64(barY+barHeight-2), float64(barWidth), 2, barBorderColor) // Bottom
+	ebitenutil.DrawRect(screen, float64(barX), float64(barY), 2, float64(barHeight), barBorderColor) // Left
+	ebitenutil.DrawRect(screen, float64(barX+barWidth-2), float64(barY), 2, float64(barHeight), barBorderColor) // Right
+	
+	// Draw individual ability slots
+	slotBgColor := color.RGBA{0x40, 0x40, 0x40, 0xFF} // Darker slot background
+	slotBorderColor := color.RGBA{0x80, 0x80, 0x80, 0xFF} // Lighter slot border
+	
+	for i := 0; i < slotCount; i++ {
+		slotX := barX + 8 + i*(slotSize+slotSpacing) // 8 for padding
+		slotY := barY + 8 // 8 for padding
+		
+		// Slot background
+		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY), float64(slotSize), float64(slotSize), slotBgColor)
+		
+		// Slot border
+		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY), float64(slotSize), 1, slotBorderColor) // Top
+		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY+slotSize-1), float64(slotSize), 1, slotBorderColor) // Bottom
+		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY), 1, float64(slotSize), slotBorderColor) // Left
+		ebitenutil.DrawRect(screen, float64(slotX+slotSize-1), float64(slotY), 1, float64(slotSize), slotBorderColor) // Right
+		
+		// Draw ability icons
+		if i == 0 && g.criticalStrikeSprite != nil && g.isLocalPlayerWarrior() {
+			// Draw critical strike icon in slot 1 (warrior only)
+			op := &ebiten.DrawImageOptions{}
+			
+			// Scale icon to fit slot (with some padding)
+			iconSize := float64(slotSize - 4) // 4 pixels padding
+			spriteWidth, spriteHeight := g.criticalStrikeSprite.Bounds().Dx(), g.criticalStrikeSprite.Bounds().Dy()
+			scaleX := iconSize / float64(spriteWidth)
+			scaleY := iconSize / float64(spriteHeight)
+			scale := min(scaleX, scaleY) // Keep aspect ratio
+			
+			op.GeoM.Scale(scale, scale)
+			
+			// Center the icon in the slot
+			scaledWidth := float64(spriteWidth) * scale
+			scaledHeight := float64(spriteHeight) * scale
+			offsetX := (float64(slotSize) - scaledWidth) / 2
+			offsetY := (float64(slotSize) - scaledHeight) / 2
+			
+			op.GeoM.Translate(float64(slotX)+offsetX, float64(slotY)+offsetY)
+			screen.DrawImage(g.criticalStrikeSprite, op)
+		} else {
+			// Draw slot number for empty slots
+			ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", i+1), slotX+slotSize/2-3, slotY+slotSize/2-4)
+		}
+	}
+}
+
+// isLocalPlayerWarrior checks if the local player is a warrior
+func (g *GameClient) isLocalPlayerWarrior() bool {
+	g.mutex.RLock()
+	defer g.mutex.RUnlock()
+	
+	localPlayer, exists := g.players[g.localPlayerID]
+	if !exists {
+		return false
+	}
+	
+	return localPlayer.Class == "warrior"
 }
 
 // drawNameplate renders the nameplate for the currently selected entity

@@ -7,3 +7,6 @@ var WarriorPNG []byte
 
 //go:embed sprites/dirt_floor.png
 var DirtFloorPNG []byte
+
+//go:embed sprites/critical_strike.png
+var CriticalStrikePNG []byte

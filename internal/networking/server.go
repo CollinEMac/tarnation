@@ -45,6 +45,9 @@ func NewGameServer() *GameServer {
 	// Start the enemy AI goroutine
 	go server.handleEnemyAI()
 
+	// Start the rage decay goroutine
+	go server.handleRageDecay()
+
 	return server
 }
 
@@ -67,6 +70,8 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Class:     "warrior", // Default class
 		Health:    100,
 		MaxHealth: 100,
+		Mana:      0,   // Warriors start with 0 rage
+		MaxMana:   100, // Maximum rage for warriors
 		Conn:      conn,
 		Weapon: &types.Weapon{
 			ID:         weaponID,
@@ -99,7 +104,11 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Data:     s.marshal(player),
 	}
 
-	if err := conn.WriteJSON(welcomeMsg); err != nil {
+	player.ConnMutex.Lock()
+	err = conn.WriteJSON(welcomeMsg)
+	player.ConnMutex.Unlock()
+	
+	if err != nil {
 		log.Printf("Error sending welcome message: %v", err)
 		return
 	}
@@ -118,7 +127,11 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Data:     s.marshal(existingPlayer),
 		}
 
-		if err := conn.WriteJSON(existingPlayerMsg); err != nil {
+		player.ConnMutex.Lock()
+		err := conn.WriteJSON(existingPlayerMsg)
+		player.ConnMutex.Unlock()
+		
+		if err != nil {
 			log.Printf("Error sending existing player %s data to new player: %v", existingPlayerID, err)
 		}
 	}
@@ -131,7 +144,11 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 				Data: s.marshal(enemy),
 			}
 
-			if err := conn.WriteJSON(enemyMsg); err != nil {
+			player.ConnMutex.Lock()
+			err := conn.WriteJSON(enemyMsg)
+			player.ConnMutex.Unlock()
+			
+			if err != nil {
 				log.Printf("Error sending existing enemy %s data to new player: %v", enemyID, err)
 			}
 		}
@@ -142,7 +159,11 @@ func (s *GameServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Type: types.MsgRoomData,
 		Data: s.marshal(s.room),
 	}
-	if err := conn.WriteJSON(roomMsg); err != nil {
+	player.ConnMutex.Lock()
+	err = conn.WriteJSON(roomMsg)
+	player.ConnMutex.Unlock()
+	
+	if err != nil {
 		log.Printf("Error sending room data to new player: %v", err)
 	}
 	
@@ -234,6 +255,8 @@ func (s *GameServer) handleMessage(player *types.Player, msg types.Message) {
 
 		if actionData.Action == "attack" && actionData.Target != "" {
 			s.handleCombat(player, actionData.Target)
+		} else if actionData.Action == "critical_strike" && actionData.Target != "" {
+			s.handleCriticalStrike(player, actionData.Target)
 		} else {
 			// Handle other actions or broadcast generic actions
 			log.Printf("Player %s used action: %s", player.ID, actionData.Action)
@@ -314,10 +337,123 @@ func (s *GameServer) spawnInitialEnemies() {
 	}
 }
 
+// handleRageDecay manages rage decay for warriors over time
+func (s *GameServer) handleRageDecay() {
+	ticker := time.NewTicker(2 * time.Second) // Check every 2 seconds
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.mutex.Lock()
+		
+		for _, player := range s.players {
+			// Only process warriors with rage
+			if player.Class == "warrior" && player.Mana > 0 {
+				// Simple decay: lose 2 rage every tick (every 2 seconds)
+				rageDecay := 2
+				
+				oldRage := player.Mana
+				player.Mana -= rageDecay
+				
+				// Ensure rage doesn't go below 0
+				if player.Mana < 0 {
+					player.Mana = 0
+				}
+				
+				// Only broadcast if rage actually changed
+				if player.Mana != oldRage {
+					// Broadcast rage update
+					s.broadcast <- types.Message{
+						Type:     types.MsgPlayerUpdate,
+						PlayerID: player.ID,
+						Data:     s.marshal(player),
+					}
+				}
+			}
+		}
+		
+		s.mutex.Unlock()
+	}
+}
+
 // marshal converts any struct to JSON for network transmission
 func (s *GameServer) marshal(v interface{}) json.RawMessage {
 	data, _ := json.Marshal(v)
 	return data
+}
+
+// handleCriticalStrike processes critical strike ability (warrior only)
+func (s *GameServer) handleCriticalStrike(attacker *types.Player, targetEnemyID string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	// Check if player is a warrior
+	if attacker.Class != "warrior" {
+		log.Printf("Player %s (%s) attempted critical strike but is not a warrior", attacker.Name, attacker.Class)
+		return
+	}
+
+	// Check if player has enough rage
+	rageCost := 30 // Critical strike costs 30 rage
+	if attacker.Mana < rageCost {
+		log.Printf("Player %s attempted critical strike but lacks rage (%d/%d)", attacker.Name, attacker.Mana, rageCost)
+		return
+	}
+
+	// Find the target enemy
+	enemy, exists := s.enemies[targetEnemyID]
+	if !exists {
+		log.Printf("Critical Strike: Enemy %s not found", targetEnemyID)
+		return
+	}
+
+	// Consume rage
+	attacker.Mana -= rageCost
+
+	// Calculate critical damage (2x normal damage + bonus)
+	baseDamage := 1
+	if attacker.Weapon != nil {
+		baseDamage = attacker.Weapon.Damage
+	}
+	critDamage := (baseDamage * 2) + 3 // 2x damage + 3 bonus
+
+	// Apply damage
+	enemy.Health -= critDamage
+	log.Printf("Player %s used Critical Strike on %s for %d damage (HP: %d/%d)",
+		attacker.Name, enemy.Name, critDamage, enemy.Health, enemy.MaxHealth)
+
+	// Add threat based on damage dealt
+	enemy.ThreatList[attacker.ID] += float64(critDamage)
+	
+	// Update target based on highest threat
+	s.updateEnemyTarget(enemy)
+
+	// Broadcast player rage update (rage was consumed)
+	s.broadcast <- types.Message{
+		Type:     types.MsgPlayerUpdate,
+		PlayerID: attacker.ID,
+		Data:     s.marshal(attacker),
+	}
+
+	if enemy.Health <= 0 {
+		// Enemy is dead - remove from game
+		delete(s.enemies, targetEnemyID)
+		log.Printf("Enemy %s has been defeated by %s's critical strike!", enemy.Name, attacker.Name)
+
+		// Broadcast enemy death
+		s.broadcast <- types.Message{
+			Type: types.MsgEnemyUpdate,
+			Data: s.marshal(map[string]interface{}{
+				"id":   targetEnemyID,
+				"dead": true,
+			}),
+		}
+	} else {
+		// Enemy still alive, broadcast health update
+		s.broadcast <- types.Message{
+			Type: types.MsgEnemyUpdate,
+			Data: s.marshal(enemy),
+		}
+	}
 }
 
 // handleCombat processes player attacks on enemies
@@ -342,6 +478,21 @@ func (s *GameServer) handleCombat(attacker *types.Player, targetEnemyID string) 
 	enemy.Health -= damage
 	log.Printf("Player %s attacked %s for %d damage (HP: %d/%d)",
 		attacker.Name, enemy.Name, damage, enemy.Health, enemy.MaxHealth)
+
+	// Generate rage for attacking (warriors only)
+	if attacker.Class == "warrior" {
+		rageGain := 5 // Base rage gained per attack
+		if attacker.Mana < attacker.MaxMana {
+			attacker.Mana = min(attacker.MaxMana, attacker.Mana + rageGain)
+			
+			// Broadcast player rage update
+			s.broadcast <- types.Message{
+				Type:     types.MsgPlayerUpdate,
+				PlayerID: attacker.ID,
+				Data:     s.marshal(attacker),
+			}
+		}
+	}
 
 	// Add threat based on damage dealt
 	enemy.ThreatList[attacker.ID] += float64(damage)
@@ -533,10 +684,18 @@ func (s *GameServer) attemptEnemyAttack(enemy *types.Enemy, target *types.Player
 		target.Health -= damage
 		enemy.LastAttack = time.Now()
 		
+		// Generate rage for taking damage (warriors only)
+		if target.Class == "warrior" {
+			rageGain := 3 // Base rage gained per hit taken
+			if target.Mana < target.MaxMana {
+				target.Mana = min(target.MaxMana, target.Mana + rageGain)
+			}
+		}
+		
 		log.Printf("Enemy %s attacked player %s for %d damage (HP: %d/%d)",
 			enemy.Name, target.Name, damage, target.Health, target.MaxHealth)
 		
-		// Broadcast player health update
+		// Broadcast player health and rage update
 		s.broadcast <- types.Message{
 			Type:     types.MsgPlayerUpdate,
 			PlayerID: target.ID,
