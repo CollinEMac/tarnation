@@ -612,12 +612,7 @@ func (g *GameClient) drawPlayer(screen *ebiten.Image, player *types.Player) {
 			op := &ebiten.DrawImageOptions{}
 			// Center the sprite (warrior sprite is 32x32, so offset by 16,16)
 			op.GeoM.Translate(screenX-16, screenY-16)
-			
-			// Tint the sprite for local player vs other players
-			if player.ID == g.localPlayerID {
-				op.ColorM.Scale(1.2, 0.8, 0.8, 1) // Slight red tint for local player
-			}
-			
+					
 			screen.DrawImage(g.warriorSprite, op)
 		} else {
 			// Fallback to colored rectangle
