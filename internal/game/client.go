@@ -47,6 +47,7 @@ type GameClient struct {
 	
 	// Sprites
 	warriorSprite    *ebiten.Image
+	dirtFloorSprite  *ebiten.Image
 }
 
 // NewGameClient creates a new game client instance
@@ -63,8 +64,9 @@ func NewGameClient() *GameClient {
 		cameraY:      0,
 	}
 	
-	// Load warrior sprite
+	// Load sprites
 	client.loadWarriorSprite()
+	client.loadDirtFloorSprite()
 	
 	return client
 }
@@ -77,6 +79,16 @@ func (g *GameClient) loadWarriorSprite() {
 		return
 	}
 	g.warriorSprite = ebiten.NewImageFromImage(img)
+}
+
+// loadDirtFloorSprite loads the dirt floor PNG sprite
+func (g *GameClient) loadDirtFloorSprite() {
+	img, _, err := image.Decode(bytes.NewReader(assets.DirtFloorPNG))
+	if err != nil {
+		log.Printf("Failed to load dirt floor sprite: %v", err)
+		return
+	}
+	g.dirtFloorSprite = ebiten.NewImageFromImage(img)
 }
 
 // ConnectToServer establishes WebSocket connection to game server
@@ -534,7 +546,10 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 	// Clear screen with dark background
 	screen.Fill(color.RGBA{0x20, 0x20, 0x20, 0xff})
 
-	// Draw walls first (as background)
+	// Draw floor first (as background)
+	g.drawFloor(screen)
+
+	// Draw walls
 	g.drawWalls(screen)
 
 	// Copy enemy data to avoid holding locks during rendering
@@ -804,6 +819,73 @@ func (g *GameClient) checkWallCollisionWithSliding(oldX, oldY, newX, newY float6
 	
 	// Can't move in any direction, stay at old position
 	return oldX, oldY
+}
+
+// drawFloor renders the dirt floor tiles
+func (g *GameClient) drawFloor(screen *ebiten.Image) {
+	if g.dirtFloorSprite == nil {
+		return
+	}
+	
+	g.mutex.RLock()
+	walls := g.room.Walls
+	cameraX := g.cameraX
+	cameraY := g.cameraY
+	g.mutex.RUnlock()
+	
+	// Calculate room bounds from walls
+	if len(walls) == 0 {
+		return
+	}
+	
+	minX, minY := walls[0].X, walls[0].Y
+	maxX, maxY := walls[0].X+walls[0].Width, walls[0].Y+walls[0].Height
+	
+	for _, wall := range walls {
+		if wall.X < minX {
+			minX = wall.X
+		}
+		if wall.Y < minY {
+			minY = wall.Y
+		}
+		if wall.X+wall.Width > maxX {
+			maxX = wall.X + wall.Width
+		}
+		if wall.Y+wall.Height > maxY {
+			maxY = wall.Y + wall.Height
+		}
+	}
+	
+	// Get sprite dimensions
+	spriteWidth, spriteHeight := g.dirtFloorSprite.Bounds().Dx(), g.dirtFloorSprite.Bounds().Dy()
+	
+	// Calculate visible area based on camera position
+	startX := int((cameraX / float64(spriteWidth)) - 1) * spriteWidth
+	startY := int((cameraY / float64(spriteHeight)) - 1) * spriteHeight
+	endX := int(cameraX) + g.screenWidth + spriteWidth
+	endY := int(cameraY) + g.screenHeight + spriteHeight
+	
+	// Draw floor tiles within room bounds
+	for x := startX; x < endX; x += spriteWidth {
+		for y := startY; y < endY; y += spriteHeight {
+			// Only draw tiles within the room interior (inside walls)
+			if float64(x) > minX && float64(y) > minY && 
+			   float64(x) < maxX-float64(spriteWidth) && float64(y) < maxY-float64(spriteHeight) {
+				
+				screenX := float64(x) - cameraX
+				screenY := float64(y) - cameraY
+				
+				// Only draw if visible on screen
+				if screenX > -float64(spriteWidth) && screenX < float64(g.screenWidth) &&
+				   screenY > -float64(spriteHeight) && screenY < float64(g.screenHeight) {
+					
+					op := &ebiten.DrawImageOptions{}
+					op.GeoM.Translate(screenX, screenY)
+					screen.DrawImage(g.dirtFloorSprite, op)
+				}
+			}
+		}
+	}
 }
 
 // drawWalls renders the room walls
