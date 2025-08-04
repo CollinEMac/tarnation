@@ -51,6 +51,7 @@ type Player struct {
 	Agility   int             `json:"agility"`
 	Intellect int             `json:"intellect"`
 	Stamina   int             `json:"stamina"`
+	Dead      bool            `json:"dead"`
 }
 
 // Weapon represents the weapon equipped by the player or enemy

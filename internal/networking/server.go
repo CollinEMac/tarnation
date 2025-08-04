@@ -290,7 +290,7 @@ func (s *GameServer) spawnInitialEnemies() {
 			Weapon: &types.Weapon{
 				ID:         uuid.New().String(),
 				Name:       "Claws",
-				Damage:     3,
+				Damage:     10,
 				Range:      1,
 				WeaponType: "melee",
 				Delay:      2 * time.Second,
@@ -473,9 +473,9 @@ func (s *GameServer) updateEnemyTarget(enemy *types.Enemy) {
 	var highestThreat float64
 	var newTargetID string
 	
-	// Find player with highest threat that still exists
+	// Find player with highest threat that still exists and is alive
 	for playerID, threat := range enemy.ThreatList {
-		if _, exists := s.players[playerID]; exists && threat > highestThreat {
+		if player, exists := s.players[playerID]; exists && !player.Dead && threat > highestThreat {
 			highestThreat = threat
 			newTargetID = playerID
 		}
@@ -511,9 +511,9 @@ func (s *GameServer) handleEnemyAI() {
 }
 
 func (s *GameServer) processEnemyAI(enemy *types.Enemy) {
-	// Clean up threat list - remove disconnected players
+	// Clean up threat list - remove disconnected or dead players
 	for playerID := range enemy.ThreatList {
-		if _, exists := s.players[playerID]; !exists {
+		if player, exists := s.players[playerID]; !exists || player.Dead {
 			delete(enemy.ThreatList, playerID)
 		}
 	}
@@ -552,6 +552,11 @@ func (s *GameServer) addRangeThreat(enemy *types.Enemy) {
 	rangeThreat := 0.1   // Small threat per tick for being in range
 	
 	for _, player := range s.players {
+		// Skip dead players
+		if player.Dead {
+			continue
+		}
+		
 		dx := player.X - enemy.X
 		dy := player.Y - enemy.Y
 		distance := math.Sqrt(dx*dx + dy*dy)
@@ -590,6 +595,11 @@ func (s *GameServer) moveEnemyTowardTarget(enemy *types.Enemy, target *types.Pla
 }
 
 func (s *GameServer) attemptEnemyAttack(enemy *types.Enemy, target *types.Player) {
+	// Don't attack dead players
+	if target.Dead {
+		return
+	}
+	
 	weaponDelay := 2 * time.Second // Default attack speed
 	if enemy.Weapon != nil {
 		weaponDelay = enemy.Weapon.Delay
@@ -621,10 +631,19 @@ func (s *GameServer) attemptEnemyAttack(enemy *types.Enemy, target *types.Player
 		}
 		
 		if target.Health <= 0 {
+			target.Health = 0
+			target.Dead = true
 			delete(enemy.ThreatList, target.ID)
 			enemy.TargetID = ""
 			s.updateEnemyTarget(enemy) // Try to find new target
 			log.Printf("Player %s has been defeated by %s", target.Name, enemy.Name)
+			
+			// Send death message to all players
+			s.broadcast <- types.Message{
+				Type:     types.MsgPlayerUpdate,
+				PlayerID: target.ID,
+				Data:     s.marshal(target),
+			}
 		}
 	}
 }

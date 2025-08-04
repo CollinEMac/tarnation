@@ -226,6 +226,7 @@ func (g *GameClient) processMessage(msg types.Message) {
 			existingPlayer.MaxHealth = player.MaxHealth
 			existingPlayer.Mana = player.Mana
 			existingPlayer.MaxMana = player.MaxMana
+			existingPlayer.Dead = player.Dead
 		}
 		g.mutex.Unlock()
 
@@ -367,6 +368,11 @@ func (g *GameClient) handleInput() {
 	g.mutex.RUnlock()
 
 	if !exists {
+		return
+	}
+
+	// Don't process inputs if player is dead
+	if localPlayer.Dead {
 		return
 	}
 
@@ -577,6 +583,19 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 
 	g.drawUI(screen)
 
+	// Check if local player is dead and show death screen
+	g.mutex.RLock()
+	var localPlayer *types.Player
+	if localPlayerID != "" {
+		localPlayer = g.players[localPlayerID]
+	}
+	g.mutex.RUnlock()
+	
+	if localPlayer != nil && localPlayer.Dead {
+		g.drawDeathScreen(screen)
+		return
+	}
+
 	if !connected {
 		ebitenutil.DebugPrintAt(screen, "Disconnected from server", 10, 70)
 	} else if playerCount == 0 {
@@ -604,6 +623,11 @@ func (g *GameClient) drawPlayer(screen *ebiten.Image, player *types.Player) {
 		if g.warriorSprite != nil {
 			op := &ebiten.DrawImageOptions{}
 			op.GeoM.Translate(screenX-16, screenY-16)
+			
+			// If player is dead, make them greyed out
+			if player.Dead {
+				op.ColorScale.Scale(0.3, 0.3, 0.3, 0.7) // Dark grey and semi-transparent
+			}
 					
 			screen.DrawImage(g.warriorSprite, op)
 		} else {
@@ -611,12 +635,22 @@ func (g *GameClient) drawPlayer(screen *ebiten.Image, player *types.Player) {
 			if player.ID == g.localPlayerID {
 				playerColor = color.RGBA{0xff, 0x80, 0x80, 0xff} // Red for local player
 			}
+			
+			// If player is dead, make them greyed out
+			if player.Dead {
+				playerColor = color.RGBA{0x40, 0x40, 0x40, 0x80} // Dark grey and semi-transparent
+			}
+			
 			ebitenutil.DrawRect(screen, screenX-10, screenY-10, 20, 20, playerColor)
 		}
 
 		opts := &text.DrawOptions{}
 		opts.GeoM.Translate(screenX-20, screenY-25)
-		text.Draw(screen, player.Name, g.fontFace, opts)
+		displayName := player.Name
+		if player.Dead {
+			displayName = player.Name + " (DEAD)"
+		}
+		text.Draw(screen, displayName, g.fontFace, opts)
 
 		barWidth := 30.0
 		barHeight := 4.0
@@ -1030,4 +1064,19 @@ func (g *GameClient) addMessage(msg string) {
 	if len(g.messages) > 10 {
 		g.messages = g.messages[:10]
 	}
+}
+
+func (g *GameClient) drawDeathScreen(screen *ebiten.Image) {
+	// Fill screen with dark red overlay
+	screen.Fill(color.RGBA{50, 0, 0, 200})
+	
+	// Draw death message in center of screen
+	deathText := "YOU HAVE DIED"
+	
+	// Calculate text position to center it
+	textWidth := len(deathText) * 8 // Approximate character width
+	textX := (g.screenWidth - textWidth) / 2
+	textY := g.screenHeight / 2 - 20
+	
+	ebitenutil.DebugPrintAt(screen, deathText, textX, textY)
 }
