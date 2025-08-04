@@ -602,9 +602,6 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 		ebitenutil.DebugPrintAt(screen, "Waiting for player data...", 10, 70)
 	} else if localPlayerID == "" {
 		ebitenutil.DebugPrintAt(screen, "No local player ID set", 10, 70)
-	} else {
-		// ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Local player: %s", localPlayerID[:8]), 10, 70)
-		// ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Camera: (%.0f, %.0f)", g.cameraX, g.cameraY), 10, 85)
 	}
 }
 
@@ -694,10 +691,6 @@ func (g *GameClient) drawUI(screen *ebiten.Image) {
 		status = "Connected"
 	}
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("Status: %s | Players: %d", status, len(g.players)))
-
-	opts := &text.DrawOptions{}
-	opts.GeoM.Translate(10, 30)
-	text.Draw(screen, "Controls: WASD/Arrows to move, Space for action, Left click to select", g.fontFace, opts)
 
 	g.drawNameplate(screen)
 	g.drawPlayerResources(screen)
