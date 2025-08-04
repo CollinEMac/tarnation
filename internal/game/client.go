@@ -23,7 +23,6 @@ import (
 	"golang.org/x/image/font/gofont/goregular"
 )
 
-// GameClient handles the client-side game logic
 type GameClient struct {
 	conn             *websocket.Conn
 	players          map[string]*types.Player
@@ -41,22 +40,18 @@ type GameClient struct {
 	messages         []string // For displaying debug info
 	shouldClose      bool     // Flag to indicate clean shutdown
 	
-	// Camera system
-	cameraX          float64   // Camera position X
-	cameraY          float64   // Camera position Y
-	screenWidth      int       // Screen dimensions
+	cameraX          float64
+	cameraY          float64
+	screenWidth      int
 	screenHeight     int
 	
-	// Sprites
 	warriorSprite       *ebiten.Image
 	dirtFloorSprite     *ebiten.Image
 	criticalStrikeSprite *ebiten.Image
 	
-	// Font
 	fontFace            text.Face
 }
 
-// NewGameClient creates a new game client instance
 func NewGameClient() *GameClient {
 	client := &GameClient{
 		players:      make(map[string]*types.Player),
@@ -70,18 +65,15 @@ func NewGameClient() *GameClient {
 		cameraY:      0,
 	}
 	
-	// Load sprites
 	client.loadWarriorSprite()
 	client.loadDirtFloorSprite()
 	client.loadCriticalStrikeSprite()
 	
-	// Load font
 	client.loadFont()
 	
 	return client
 }
 
-// loadWarriorSprite loads the warrior PNG sprite
 func (g *GameClient) loadWarriorSprite() {
 	img, _, err := image.Decode(bytes.NewReader(assets.WarriorPNG))
 	if err != nil {
@@ -91,7 +83,6 @@ func (g *GameClient) loadWarriorSprite() {
 	g.warriorSprite = ebiten.NewImageFromImage(img)
 }
 
-// loadDirtFloorSprite loads the dirt floor PNG sprite
 func (g *GameClient) loadDirtFloorSprite() {
 	img, _, err := image.Decode(bytes.NewReader(assets.DirtFloorPNG))
 	if err != nil {
@@ -101,7 +92,6 @@ func (g *GameClient) loadDirtFloorSprite() {
 	g.dirtFloorSprite = ebiten.NewImageFromImage(img)
 }
 
-// loadCriticalStrikeSprite loads the critical strike PNG sprite
 func (g *GameClient) loadCriticalStrikeSprite() {
 	img, _, err := image.Decode(bytes.NewReader(assets.CriticalStrikePNG))
 	if err != nil {
@@ -111,7 +101,6 @@ func (g *GameClient) loadCriticalStrikeSprite() {
 	g.criticalStrikeSprite = ebiten.NewImageFromImage(img)
 }
 
-// loadFont sets up the default font face
 func (g *GameClient) loadFont() {
 	source, err := text.NewGoTextFaceSource(bytes.NewReader(goregular.TTF))
 	if err != nil {
@@ -124,7 +113,6 @@ func (g *GameClient) loadFont() {
 	}
 }
 
-// ConnectToServer establishes WebSocket connection to game server
 func (g *GameClient) ConnectToServer(url string) error {
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
@@ -134,14 +122,12 @@ func (g *GameClient) ConnectToServer(url string) error {
 	g.conn = conn
 	g.connected = true
 
-	// Start message handling goroutine
 	go g.handleMessages()
 
 	g.addMessage("Connected to server!")
 	return nil
 }
 
-// handleMessages processes incoming messages from the server
 func (g *GameClient) handleMessages() {
 	defer func() {
 		g.mutex.Lock()
@@ -167,7 +153,6 @@ func (g *GameClient) handleMessages() {
 	}
 }
 
-// processMessage handles incoming server messages
 func (g *GameClient) processMessage(msg types.Message) {
 	switch msg.Type {
 	case types.MsgPlayerJoin:
@@ -321,7 +306,6 @@ func (g *GameClient) processMessage(msg types.Message) {
 	}
 }
 
-// sendMessage sends a message to the server
 func (g *GameClient) sendMessage(msgType types.MessageType, data interface{}) error {
 	if !g.connected || g.conn == nil {
 		return fmt.Errorf("not connected to server")
@@ -341,7 +325,6 @@ func (g *GameClient) sendMessage(msgType types.MessageType, data interface{}) er
 	return g.conn.WriteJSON(msg)
 }
 
-// Update implements ebiten.Game interface
 func (g *GameClient) Update() error {
 	g.mutex.RLock()
 	connected := g.connected
@@ -351,29 +334,24 @@ func (g *GameClient) Update() error {
 		return nil
 	}
 
-	// Handle player input
 	g.handleInput()
 	
-	// Update camera to follow local player
 	g.updateCamera()
 	
 	return nil
 }
 
-// Cleanup handles graceful shutdown when window is closed
 func (g *GameClient) Cleanup() {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
 	if g.connected && g.conn != nil {
-		// Send clean disconnect message
 		g.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		g.conn.Close()
 		g.connected = false
 	}
 }
 
-// handleInput processes keyboard input for player movement
 func (g *GameClient) handleInput() {
 	if g.localPlayerID == "" {
 		return
@@ -395,7 +373,6 @@ func (g *GameClient) handleInput() {
 	newX, newY := localPlayer.X, localPlayer.Y
 	moved := false
 
-	// Basic WASD movement
 	moveSpeed := 3.0
 	if ebiten.IsKeyPressed(ebiten.KeyW) || ebiten.IsKeyPressed(ebiten.KeyArrowUp) {
 		newY -= moveSpeed
@@ -414,14 +391,11 @@ func (g *GameClient) handleInput() {
 		moved = true
 	}
 
-	// Handle player selection (left click)
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		mouseX, mouseY := ebiten.CursorPosition()
-		// Convert screen coordinates to world coordinates
 		worldX := float64(mouseX) + g.cameraX
 		worldY := float64(mouseY) + g.cameraY
 		
-		// Check for player first (players have priority over enemies for selection)
 		if playerID := g.getPlayerAt(worldX, worldY); playerID != "" {
 			g.selectedEntityID = playerID
 			g.selectedEntityType = "player"
@@ -429,26 +403,22 @@ func (g *GameClient) handleInput() {
 			g.selectedEntityID = enemyID
 			g.selectedEntityType = "enemy"
 		} else {
-			// Clear selection if clicking empty space
 			g.selectedEntityID = ""
 			g.selectedEntityType = ""
 		}
 	}
 
-	// Handle player targeting (right click)
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
 		mouseX, mouseY := ebiten.CursorPosition()
-		// Convert screen coordinates to world coordinates
 		worldX := float64(mouseX) + g.cameraX
 		worldY := float64(mouseY) + g.cameraY
 		
 		if enemyID := g.getEnemyAt(worldX, worldY); enemyID != "" {
 			g.targetEnemyID = enemyID
-			// Also select the enemy for nameplate display
 			g.selectedEntityID = enemyID
 			g.selectedEntityType = "enemy"
 		} else {
-			g.targetEnemyID = "" // Clear target if clicking empty space
+			g.targetEnemyID = ""
 		}
 	}
 
@@ -458,9 +428,7 @@ func (g *GameClient) handleInput() {
 		})
 	}
 
-	// Handle ability hotkeys
 	if inpututil.IsKeyJustPressed(ebiten.Key1) {
-		// Critical Strike ability (slot 1) - warrior only
 		if g.targetEnemyID != "" && g.isLocalPlayerWarrior() {
 			g.sendMessage(types.MsgPlayerAction, map[string]interface{}{
 				"action": "critical_strike",
@@ -469,17 +437,14 @@ func (g *GameClient) handleInput() {
 		}
 	}
 
-	// Handle auto-combat with targeted enemy
 	if g.targetEnemyID != "" {
 		g.mutex.RLock()
 		targetEnemy, enemyExists := g.enemies[g.targetEnemyID]
 		g.mutex.RUnlock()
 
 		if !enemyExists {
-			// Target is dead or doesn't exist, clear target
 			g.targetEnemyID = ""
 		} else {
-			// Calculate distance to target
 			dx := targetEnemy.X - localPlayer.X
 			dy := targetEnemy.Y - localPlayer.Y
 			distance := math.Sqrt(dx*dx + dy*dy)
@@ -492,16 +457,13 @@ func (g *GameClient) handleInput() {
 			}
 
 			if distance > weaponRange {
-				// Move toward target
 				moveSpeed := 3.0
 				if distance > 0 {
-					// Normalize direction and move
 					newX = localPlayer.X + (dx/distance)*moveSpeed
 					newY = localPlayer.Y + (dy/distance)*moveSpeed
 					moved = true
 				}
 			} else {
-				// In range - attack if enough time has passed
 				if time.Since(g.lastAttackTime) > weaponDelay {
 					g.sendMessage(types.MsgPlayerAction, map[string]interface{}{
 						"action": "attack",
@@ -513,24 +475,19 @@ func (g *GameClient) handleInput() {
 		}
 	}
 
-	// Send movement update if player moved
 	if moved {
-		// Use sliding collision detection
 		g.mutex.RLock()
 		walls := g.room.Walls
 		g.mutex.RUnlock()
 		
 		validX, validY := g.checkWallCollisionWithSliding(localPlayer.X, localPlayer.Y, newX, newY, walls)
 		
-		// Only update if position actually changed
 		if validX != localPlayer.X || validY != localPlayer.Y {
-			// Update local position immediately for responsive feel
 			g.mutex.Lock()
 			localPlayer.X = validX
 			localPlayer.Y = validY
 			g.mutex.Unlock()
 
-			// Send update to server
 			moveData := map[string]float64{
 				"x": validX,
 				"y": validY,
@@ -545,12 +502,10 @@ func (g *GameClient) handleInput() {
 	}
 }
 
-// updateCamera updates the camera position to follow the local player
 func (g *GameClient) updateCamera() {
 	g.mutex.RLock()
 	defer g.mutex.RUnlock()
 	
-	// Get local player
 	localPlayer, exists := g.players[g.localPlayerID]
 	if !exists {
 		return
@@ -560,17 +515,14 @@ func (g *GameClient) updateCamera() {
 	deadzoneWidth := float64(g.screenWidth) / 4   // 200 pixels
 	deadzoneHeight := float64(g.screenHeight) / 4 // 150 pixels
 	
-	// Calculate player position relative to current camera
 	playerScreenX := localPlayer.X - g.cameraX
 	playerScreenY := localPlayer.Y - g.cameraY
 	
-	// Calculate deadzone boundaries
 	deadzoneLeft := float64(g.screenWidth)/2 - deadzoneWidth/2
 	deadzoneRight := float64(g.screenWidth)/2 + deadzoneWidth/2
 	deadzoneTop := float64(g.screenHeight)/2 - deadzoneHeight/2
 	deadzoneBottom := float64(g.screenHeight)/2 + deadzoneHeight/2
 	
-	// Move camera if player is outside deadzone
 	if playerScreenX < deadzoneLeft {
 		g.cameraX = localPlayer.X - deadzoneLeft
 	} else if playerScreenX > deadzoneRight {
@@ -585,18 +537,12 @@ func (g *GameClient) updateCamera() {
 	
 }
 
-// Draw implements ebiten.Game interface
 func (g *GameClient) Draw(screen *ebiten.Image) {
-	// Clear screen with dark background
 	screen.Fill(color.RGBA{0x20, 0x20, 0x20, 0xff})
 
-	// Draw floor first (as background)
 	g.drawFloor(screen)
-
-	// Draw walls
 	g.drawWalls(screen)
 
-	// Copy enemy data to avoid holding locks during rendering
 	g.mutex.RLock()
 
 	// Create a snapshot of players to avoid holding lock during draw
@@ -608,19 +554,15 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 	}
 	g.mutex.RUnlock()
 
-	// Draw all enemies without holding any locks
 	for _, enemy := range enemySnapshot {
 		g.drawEnemy(screen, enemy)
 	}
 
-	// Players should be drawn last so they are in front
-	// Copy player data to avoid holding locks during rendering
 	g.mutex.RLock()
 	connected := g.connected
 	playerCount := len(g.players)
 	localPlayerID := g.localPlayerID
 
-	// Create a snapshot of players to avoid holding lock during draw
 	playerSnapshot := make([]*types.Player, 0, len(g.players))
 	for _, player := range g.players {
 		// Create copy of player data
@@ -629,15 +571,12 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 	}
 	g.mutex.RUnlock()
 
-	// Draw all players without holding any locks
 	for _, player := range playerSnapshot {
 		g.drawPlayer(screen, player)
 	}
 
-	// Draw UI on top
 	g.drawUI(screen)
 
-	// Debug info
 	if !connected {
 		ebitenutil.DebugPrintAt(screen, "Disconnected from server", 10, 70)
 	} else if playerCount == 0 {
@@ -650,31 +589,24 @@ func (g *GameClient) Draw(screen *ebiten.Image) {
 	}
 }
 
-// drawPlayer renders a player on screen
 func (g *GameClient) drawPlayer(screen *ebiten.Image, player *types.Player) {
-	// Get camera position
 	g.mutex.RLock()
 	cameraX := g.cameraX
 	cameraY := g.cameraY
 	g.mutex.RUnlock()
 	
-	// Calculate screen position
 	screenX := player.X - cameraX
 	screenY := player.Y - cameraY
 	
-	// Only draw if player is visible on screen
 	if screenX >= -20 && screenX <= float64(g.screenWidth)+20 &&
 	   screenY >= -20 && screenY <= float64(g.screenHeight)+20 {
 		
-		// Draw warrior sprite if available, otherwise fallback to rectangle
 		if g.warriorSprite != nil {
 			op := &ebiten.DrawImageOptions{}
-			// Center the sprite (warrior sprite is 32x32, so offset by 16,16)
 			op.GeoM.Translate(screenX-16, screenY-16)
 					
 			screen.DrawImage(g.warriorSprite, op)
 		} else {
-			// Fallback to colored rectangle
 			playerColor := color.RGBA{0x80, 0x80, 0xff, 0xff} // Blue for other players
 			if player.ID == g.localPlayerID {
 				playerColor = color.RGBA{0xff, 0x80, 0x80, 0xff} // Red for local player
@@ -682,83 +614,62 @@ func (g *GameClient) drawPlayer(screen *ebiten.Image, player *types.Player) {
 			ebitenutil.DrawRect(screen, screenX-10, screenY-10, 20, 20, playerColor)
 		}
 
-		// Draw player name
 		opts := &text.DrawOptions{}
 		opts.GeoM.Translate(screenX-20, screenY-25)
 		text.Draw(screen, player.Name, g.fontFace, opts)
 
-		// Draw health bar
 		barWidth := 30.0
 		barHeight := 4.0
 		healthPercent := float64(player.Health) / float64(player.MaxHealth)
 
-		// Health (green)
 		ebitenutil.DrawRect(screen, screenX-barWidth/2, screenY+15, barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
 	}
 }
 
-// drawEnemy renders a single enemy on the screen
 func (g *GameClient) drawEnemy(screen *ebiten.Image, enemy *types.Enemy) {
-	// Get camera position
 	g.mutex.RLock()
 	cameraX := g.cameraX
 	cameraY := g.cameraY
 	g.mutex.RUnlock()
 	
-	// Calculate screen position
 	screenX := enemy.X - cameraX
 	screenY := enemy.Y - cameraY
 	
-	// Only draw if enemy is visible on screen
 	if screenX >= -20 && screenX <= float64(g.screenWidth)+20 &&
 	   screenY >= -20 && screenY <= float64(g.screenHeight)+20 {
 		
-		// Simple colored rectangle for now
-		enemyColor := color.RGBA{0xff, 0xff, 0xff, 0xff} // white for now
+		enemyColor := color.RGBA{0xff, 0xff, 0xff, 0xff}
 
-		// Draw enemy as a 20x20 rectangle
 		ebitenutil.DrawRect(screen, screenX-10, screenY-10, 20, 20, enemyColor)
 
-		// Draw enemy name
 		opts := &text.DrawOptions{}
 		opts.GeoM.Translate(screenX-20, screenY-25)
 		text.Draw(screen, enemy.Name, g.fontFace, opts)
 
-		// Draw health bar
 		barWidth := 30.0
 		barHeight := 4.0
 		healthPercent := float64(enemy.Health) / float64(enemy.MaxHealth)
 
-		// Health (green)
 		ebitenutil.DrawRect(screen, screenX-barWidth/2, screenY+15, barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
 	}
 }
 
-// drawUI renders the game UI
 func (g *GameClient) drawUI(screen *ebiten.Image) {
-	// Connection status
 	status := "Disconnected"
 	if g.connected {
 		status = "Connected"
 	}
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("Status: %s | Players: %d", status, len(g.players)))
 
-	// Controls
 	opts := &text.DrawOptions{}
 	opts.GeoM.Translate(10, 30)
 	text.Draw(screen, "Controls: WASD/Arrows to move, Space for action, Left click to select", g.fontFace, opts)
 
-	// Draw nameplate for selected entity
 	g.drawNameplate(screen)
-	
-	// Draw player resources (health/rage)
 	g.drawPlayerResources(screen)
-	
-	// Draw action bar
 	g.drawActionBar(screen)
 }
 
-// drawPlayerResources renders the local player's health and rage bars
 func (g *GameClient) drawPlayerResources(screen *ebiten.Image) {
 	g.mutex.RLock()
 	localPlayer, exists := g.players[g.localPlayerID]
@@ -768,41 +679,32 @@ func (g *GameClient) drawPlayerResources(screen *ebiten.Image) {
 		return
 	}
 	
-	// Resource bar dimensions (original close spacing)
 	barWidth := 200.0
 	barHeight := 20.0
-	barSpacing := 4.0 // Small gap like originally
+	barSpacing := 4.0
 	
 	// Center the bar group with action bar center
 	actionBarY := float64(g.screenHeight) - 56.0 - 10.0
 	actionBarCenterY := actionBarY + 28.0 // Center of action bar
 	
-	// Total height of both bars = 20 + 4 + 20 = 44px
 	totalBarsHeight := barHeight + barSpacing + barHeight
 	
-	// Start health bar so the center of both bars aligns with action bar center
 	barX := 20.0
 	barY := actionBarCenterY - (totalBarsHeight / 2.0)
 	
-	// Draw health bar
 	healthPercent := float64(localPlayer.Health) / float64(localPlayer.MaxHealth)
 	
-	// Health bar background (dark red)
 	ebitenutil.DrawRect(screen, barX, barY, barWidth, barHeight, color.RGBA{0x40, 0x00, 0x00, 0xFF})
-	// Health bar foreground (red)
 	ebitenutil.DrawRect(screen, barX, barY, barWidth*healthPercent, barHeight, color.RGBA{0xFF, 0x00, 0x00, 0xFF})
-	// Health bar border
-	ebitenutil.DrawRect(screen, barX-1, barY-1, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Top
-	ebitenutil.DrawRect(screen, barX-1, barY+barHeight, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Bottom
-	ebitenutil.DrawRect(screen, barX-1, barY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Left
-	ebitenutil.DrawRect(screen, barX+barWidth, barY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Right
+	ebitenutil.DrawRect(screen, barX-1, barY-1, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF})
+	ebitenutil.DrawRect(screen, barX-1, barY+barHeight, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF})
+	ebitenutil.DrawRect(screen, barX-1, barY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF})
+	ebitenutil.DrawRect(screen, barX+barWidth, barY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF})
 	
-	// Health text
 	opts := &text.DrawOptions{}
 	opts.GeoM.Translate(barX, barY-15)
 	text.Draw(screen, fmt.Sprintf("Health: %d/%d", localPlayer.Health, localPlayer.MaxHealth), g.fontFace, opts)
 	
-	// Draw resource bar (rage for warriors, mana for other classes)  
 	resourceY := barY + barHeight + barSpacing
 	resourcePercent := float64(localPlayer.Mana) / float64(localPlayer.MaxMana)
 	
@@ -819,80 +721,63 @@ func (g *GameClient) drawPlayerResources(screen *ebiten.Image) {
 		resourceFgColor = color.RGBA{0x00, 0x80, 0xFF, 0xFF} // Blue
 	}
 	
-	// Resource bar background
 	ebitenutil.DrawRect(screen, barX, resourceY, barWidth, barHeight, resourceBgColor)
-	// Resource bar foreground
 	ebitenutil.DrawRect(screen, barX, resourceY, barWidth*resourcePercent, barHeight, resourceFgColor)
-	// Resource bar border
-	ebitenutil.DrawRect(screen, barX-1, resourceY-1, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Top
-	ebitenutil.DrawRect(screen, barX-1, resourceY+barHeight, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Bottom
-	ebitenutil.DrawRect(screen, barX-1, resourceY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Left
-	ebitenutil.DrawRect(screen, barX+barWidth, resourceY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}) // Right
+	ebitenutil.DrawRect(screen, barX-1, resourceY-1, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF})
+	ebitenutil.DrawRect(screen, barX-1, resourceY+barHeight, barWidth+2, 1, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF})
+	ebitenutil.DrawRect(screen, barX-1, resourceY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF})
+	ebitenutil.DrawRect(screen, barX+barWidth, resourceY-1, 1, barHeight+2, color.RGBA{0xFF, 0xFF, 0xFF, 0xFF})
 	
-	// Resource text
 	resourceOpts := &text.DrawOptions{}
 	resourceOpts.GeoM.Translate(barX, resourceY-15)
 	text.Draw(screen, fmt.Sprintf("%s: %d/%d", resourceLabel, localPlayer.Mana, localPlayer.MaxMana), g.fontFace, resourceOpts)
 }
 
-// drawActionBar renders the ability action bar at the bottom of the screen
 func (g *GameClient) drawActionBar(screen *ebiten.Image) {
-	// Action bar dimensions
 	slotCount := 8
 	slotSize := 40
 	slotSpacing := 4
 	barWidth := slotCount*slotSize + (slotCount-1)*slotSpacing + 16 // +16 for padding
 	barHeight := slotSize + 16 // +16 for padding
 	
-	// Position at bottom center of screen
 	barX := (g.screenWidth - barWidth) / 2
 	barY := g.screenHeight - barHeight - 10 // 10 pixels from bottom
 	
-	// Draw action bar background
-	barBgColor := color.RGBA{0x20, 0x20, 0x20, 0xE0} // Semi-transparent dark
-	barBorderColor := color.RGBA{0x60, 0x60, 0x60, 0xFF} // Gray border
+	barBgColor := color.RGBA{0x20, 0x20, 0x20, 0xE0}
+	barBorderColor := color.RGBA{0x60, 0x60, 0x60, 0xFF}
 	
-	// Background
 	ebitenutil.DrawRect(screen, float64(barX), float64(barY), float64(barWidth), float64(barHeight), barBgColor)
 	
-	// Border
-	ebitenutil.DrawRect(screen, float64(barX), float64(barY), float64(barWidth), 2, barBorderColor) // Top
-	ebitenutil.DrawRect(screen, float64(barX), float64(barY+barHeight-2), float64(barWidth), 2, barBorderColor) // Bottom
-	ebitenutil.DrawRect(screen, float64(barX), float64(barY), 2, float64(barHeight), barBorderColor) // Left
-	ebitenutil.DrawRect(screen, float64(barX+barWidth-2), float64(barY), 2, float64(barHeight), barBorderColor) // Right
+	ebitenutil.DrawRect(screen, float64(barX), float64(barY), float64(barWidth), 2, barBorderColor)
+	ebitenutil.DrawRect(screen, float64(barX), float64(barY+barHeight-2), float64(barWidth), 2, barBorderColor)
+	ebitenutil.DrawRect(screen, float64(barX), float64(barY), 2, float64(barHeight), barBorderColor)
+	ebitenutil.DrawRect(screen, float64(barX+barWidth-2), float64(barY), 2, float64(barHeight), barBorderColor)
 	
-	// Draw individual ability slots
-	slotBgColor := color.RGBA{0x40, 0x40, 0x40, 0xFF} // Darker slot background
-	slotBorderColor := color.RGBA{0x80, 0x80, 0x80, 0xFF} // Lighter slot border
+	slotBgColor := color.RGBA{0x40, 0x40, 0x40, 0xFF}
+	slotBorderColor := color.RGBA{0x80, 0x80, 0x80, 0xFF}
 	
 	for i := 0; i < slotCount; i++ {
 		slotX := barX + 8 + i*(slotSize+slotSpacing) // 8 for padding
 		slotY := barY + 8 // 8 for padding
 		
-		// Slot background
 		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY), float64(slotSize), float64(slotSize), slotBgColor)
 		
-		// Slot border
-		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY), float64(slotSize), 1, slotBorderColor) // Top
-		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY+slotSize-1), float64(slotSize), 1, slotBorderColor) // Bottom
-		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY), 1, float64(slotSize), slotBorderColor) // Left
-		ebitenutil.DrawRect(screen, float64(slotX+slotSize-1), float64(slotY), 1, float64(slotSize), slotBorderColor) // Right
+		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY), float64(slotSize), 1, slotBorderColor)
+		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY+slotSize-1), float64(slotSize), 1, slotBorderColor)
+		ebitenutil.DrawRect(screen, float64(slotX), float64(slotY), 1, float64(slotSize), slotBorderColor)
+		ebitenutil.DrawRect(screen, float64(slotX+slotSize-1), float64(slotY), 1, float64(slotSize), slotBorderColor)
 		
-		// Draw ability icons
 		if i == 0 && g.criticalStrikeSprite != nil && g.isLocalPlayerWarrior() {
-			// Draw critical strike icon in slot 1 (warrior only)
 			op := &ebiten.DrawImageOptions{}
 			
-			// Scale icon to fit slot (with some padding)
-			iconSize := float64(slotSize - 4) // 4 pixels padding
+			iconSize := float64(slotSize - 4)
 			spriteWidth, spriteHeight := g.criticalStrikeSprite.Bounds().Dx(), g.criticalStrikeSprite.Bounds().Dy()
 			scaleX := iconSize / float64(spriteWidth)
 			scaleY := iconSize / float64(spriteHeight)
-			scale := min(scaleX, scaleY) // Keep aspect ratio
+			scale := min(scaleX, scaleY)
 			
 			op.GeoM.Scale(scale, scale)
 			
-			// Center the icon in the slot
 			scaledWidth := float64(spriteWidth) * scale
 			scaledHeight := float64(spriteHeight) * scale
 			offsetX := (float64(slotSize) - scaledWidth) / 2
@@ -901,7 +786,6 @@ func (g *GameClient) drawActionBar(screen *ebiten.Image) {
 			op.GeoM.Translate(float64(slotX)+offsetX, float64(slotY)+offsetY)
 			screen.DrawImage(g.criticalStrikeSprite, op)
 		} else {
-			// Draw slot number for empty slots
 			opts := &text.DrawOptions{}
 			opts.GeoM.Translate(float64(slotX+slotSize/2-3), float64(slotY+slotSize/2-4))
 			text.Draw(screen, fmt.Sprintf("%d", i+1), g.fontFace, opts)
@@ -909,7 +793,6 @@ func (g *GameClient) drawActionBar(screen *ebiten.Image) {
 	}
 }
 
-// isLocalPlayerWarrior checks if the local player is a warrior
 func (g *GameClient) isLocalPlayerWarrior() bool {
 	g.mutex.RLock()
 	defer g.mutex.RUnlock()
@@ -922,7 +805,6 @@ func (g *GameClient) isLocalPlayerWarrior() bool {
 	return localPlayer.Class == "warrior"
 }
 
-// drawNameplate renders the nameplate for the currently selected entity
 func (g *GameClient) drawNameplate(screen *ebiten.Image) {
 	g.mutex.RLock()
 	selectedID := g.selectedEntityID
@@ -930,7 +812,7 @@ func (g *GameClient) drawNameplate(screen *ebiten.Image) {
 
 	if selectedID == "" || selectedType == "" {
 		g.mutex.RUnlock()
-		return // No entity selected
+		return
 	}
 
 	var name string
@@ -958,7 +840,6 @@ func (g *GameClient) drawNameplate(screen *ebiten.Image) {
 	}
 
 	if !exists {
-		// Entity no longer exists, clear selection
 		g.selectedEntityID = ""
 		g.selectedEntityType = ""
 		g.mutex.RUnlock()
@@ -966,20 +847,17 @@ func (g *GameClient) drawNameplate(screen *ebiten.Image) {
 	}
 	g.mutex.RUnlock()
 
-	// Position nameplate in top-right area
 	nameplateX := 600
 	nameplateY := 10
 	nameplateWidth := 180
 	nameplateHeight := 80
 
-	// Draw background
 	ebitenutil.DrawRect(screen, float64(nameplateX), float64(nameplateY), float64(nameplateWidth), float64(nameplateHeight), color.RGBA{0x00, 0x00, 0x00, 0x80})
 	ebitenutil.DrawRect(screen, float64(nameplateX), float64(nameplateY), float64(nameplateWidth), 2, color.RGBA{0xff, 0xff, 0xff, 0xff})
 	ebitenutil.DrawRect(screen, float64(nameplateX), float64(nameplateY+nameplateHeight-2), float64(nameplateWidth), 2, color.RGBA{0xff, 0xff, 0xff, 0xff})
 	ebitenutil.DrawRect(screen, float64(nameplateX), float64(nameplateY), 2, float64(nameplateHeight), color.RGBA{0xff, 0xff, 0xff, 0xff})
 	ebitenutil.DrawRect(screen, float64(nameplateX+nameplateWidth-2), float64(nameplateY), 2, float64(nameplateHeight), color.RGBA{0xff, 0xff, 0xff, 0xff})
 
-	// Draw entity information
 	opts := &text.DrawOptions{}
 	opts.GeoM.Translate(float64(nameplateX+5), float64(nameplateY+5))
 	text.Draw(screen, fmt.Sprintf("Name: %s", name), g.fontFace, opts)
@@ -990,32 +868,24 @@ func (g *GameClient) drawNameplate(screen *ebiten.Image) {
 	opts.GeoM.Translate(float64(nameplateX+5), float64(nameplateY+35))
 	text.Draw(screen, fmt.Sprintf("Mana: %d/%d", mana, maxMana), g.fontFace, opts)
 
-	// Draw health bar
 	barWidth := float64(nameplateWidth - 10)
 	barHeight := 8.0
 	healthPercent := float64(health) / float64(maxHealth)
 	
-	// Health bar background (red)
 	ebitenutil.DrawRect(screen, float64(nameplateX+5), float64(nameplateY+50), barWidth, barHeight, color.RGBA{0x80, 0x00, 0x00, 0xff})
-	// Health bar foreground (green)
 	ebitenutil.DrawRect(screen, float64(nameplateX+5), float64(nameplateY+50), barWidth*healthPercent, barHeight, color.RGBA{0x00, 0xff, 0x00, 0xff})
 
-	// Draw mana bar
 	manaPercent := float64(mana) / float64(maxMana)
 	if maxMana > 0 {
-		// Mana bar background (dark blue)
 		ebitenutil.DrawRect(screen, float64(nameplateX+5), float64(nameplateY+62), barWidth, barHeight, color.RGBA{0x00, 0x00, 0x80, 0xff})
-		// Mana bar foreground (blue)
 		ebitenutil.DrawRect(screen, float64(nameplateX+5), float64(nameplateY+62), barWidth*manaPercent, barHeight, color.RGBA{0x00, 0x80, 0xff, 0xff})
 	}
 }
 
-// checkWallCollision checks if a position would collide with any walls
 func (g *GameClient) checkWallCollision(x, y float64, walls []types.Wall) bool {
-	entitySize := 10.0 // Half the size of player/enemy (20x20 rectangle)
+	entitySize := 10.0
 	
 	for _, wall := range walls {
-		// Check if entity bounds intersect with wall bounds
 		if x-entitySize < wall.X+wall.Width &&
 			x+entitySize > wall.X &&
 			y-entitySize < wall.Y+wall.Height &&
@@ -1026,28 +896,22 @@ func (g *GameClient) checkWallCollision(x, y float64, walls []types.Wall) bool {
 	return false
 }
 
-// checkWallCollisionWithSliding checks collision and returns valid position allowing sliding
 func (g *GameClient) checkWallCollisionWithSliding(oldX, oldY, newX, newY float64, walls []types.Wall) (float64, float64) {
-	// If new position doesn't collide, allow the move
 	if !g.checkWallCollision(newX, newY, walls) {
 		return newX, newY
 	}
 	
-	// Try horizontal movement only (keep old Y)
 	if !g.checkWallCollision(newX, oldY, walls) {
 		return newX, oldY
 	}
 	
-	// Try vertical movement only (keep old X)
 	if !g.checkWallCollision(oldX, newY, walls) {
 		return oldX, newY
 	}
 	
-	// Can't move in any direction, stay at old position
 	return oldX, oldY
 }
 
-// drawFloor renders the dirt floor tiles
 func (g *GameClient) drawFloor(screen *ebiten.Image) {
 	if g.dirtFloorSprite == nil {
 		return
@@ -1059,7 +923,6 @@ func (g *GameClient) drawFloor(screen *ebiten.Image) {
 	cameraY := g.cameraY
 	g.mutex.RUnlock()
 	
-	// Calculate room bounds from walls
 	if len(walls) == 0 {
 		return
 	}
@@ -1082,26 +945,21 @@ func (g *GameClient) drawFloor(screen *ebiten.Image) {
 		}
 	}
 	
-	// Get sprite dimensions
 	spriteWidth, spriteHeight := g.dirtFloorSprite.Bounds().Dx(), g.dirtFloorSprite.Bounds().Dy()
 	
-	// Calculate visible area based on camera position
 	startX := int((cameraX / float64(spriteWidth)) - 1) * spriteWidth
 	startY := int((cameraY / float64(spriteHeight)) - 1) * spriteHeight
 	endX := int(cameraX) + g.screenWidth + spriteWidth
 	endY := int(cameraY) + g.screenHeight + spriteHeight
 	
-	// Draw floor tiles within room bounds
 	for x := startX; x < endX; x += spriteWidth {
 		for y := startY; y < endY; y += spriteHeight {
-			// Only draw tiles within the room interior (inside walls)
 			if float64(x) > minX && float64(y) > minY && 
 			   float64(x) < maxX-float64(spriteWidth) && float64(y) < maxY-float64(spriteHeight) {
 				
 				screenX := float64(x) - cameraX
 				screenY := float64(y) - cameraY
 				
-				// Only draw if visible on screen
 				if screenX > -float64(spriteWidth) && screenX < float64(g.screenWidth) &&
 				   screenY > -float64(spriteHeight) && screenY < float64(g.screenHeight) {
 					
@@ -1114,7 +972,6 @@ func (g *GameClient) drawFloor(screen *ebiten.Image) {
 	}
 }
 
-// drawWalls renders the room walls
 func (g *GameClient) drawWalls(screen *ebiten.Image) {
 	g.mutex.RLock()
 	walls := g.room.Walls
@@ -1122,13 +979,11 @@ func (g *GameClient) drawWalls(screen *ebiten.Image) {
 	cameraY := g.cameraY
 	g.mutex.RUnlock()
 
-	// Draw each wall as a gray rectangle, offset by camera position
 	wallColor := color.RGBA{0x80, 0x80, 0x80, 0xff}
 	for _, wall := range walls {
 		screenX := wall.X - cameraX
 		screenY := wall.Y - cameraY
 		
-		// Only draw walls that are visible on screen
 		if screenX+wall.Width >= 0 && screenX <= float64(g.screenWidth) &&
 		   screenY+wall.Height >= 0 && screenY <= float64(g.screenHeight) {
 			ebitenutil.DrawRect(screen, screenX, screenY, wall.Width, wall.Height, wallColor)
@@ -1136,18 +991,15 @@ func (g *GameClient) drawWalls(screen *ebiten.Image) {
 	}
 }
 
-// Layout implements ebiten.Game interface
 func (g *GameClient) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
 	return 800, 600
 }
 
-// getEnemyAt checks if there's an enemy at the given screen coordinates
 func (g *GameClient) getEnemyAt(x, y float64) string {
 	g.mutex.RLock()
 	defer g.mutex.RUnlock()
 
 	for enemyID, enemy := range g.enemies {
-		// Check if click is within enemy bounds (20x20 rectangle)
 		if x >= enemy.X-10 && x <= enemy.X+10 &&
 			y >= enemy.Y-10 && y <= enemy.Y+10 {
 			return enemyID
@@ -1156,13 +1008,11 @@ func (g *GameClient) getEnemyAt(x, y float64) string {
 	return ""
 }
 
-// getPlayerAt checks if there's a player at the given screen coordinates
 func (g *GameClient) getPlayerAt(x, y float64) string {
 	g.mutex.RLock()
 	defer g.mutex.RUnlock()
 
 	for playerID, player := range g.players {
-		// Check if click is within player bounds (20x20 rectangle)
 		if x >= player.X-10 && x <= player.X+10 &&
 			y >= player.Y-10 && y <= player.Y+10 {
 			return playerID
@@ -1171,15 +1021,12 @@ func (g *GameClient) getPlayerAt(x, y float64) string {
 	return ""
 }
 
-// addMessage adds a message to the message log
 func (g *GameClient) addMessage(msg string) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	// Add message to beginning of slice
 	g.messages = append([]string{fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), msg)}, g.messages...)
 
-	// Keep only last 10 messages
 	if len(g.messages) > 10 {
 		g.messages = g.messages[:10]
 	}
